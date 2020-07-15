@@ -1,0 +1,90 @@
+#![enable(implicit_some)]
+Container(
+    transform: (
+        id: "background",
+        anchor: Middle,
+        stretch: XY( x_margin: 0., y_margin: 0., keep_aspect_ratio: false ),
+        width: 20.,
+        height: 20.,
+    ),
+    background: SolidColor(0.0, 0.0, 0.0, 1.0),
+    children: [
+        Container(
+            transform: (
+                id: "notice_container",
+                x: 250.,
+                y: 300.,
+                width: 250.,
+                height: 25.,
+                tab_order: 1,
+                anchor: BottomLeft,
+            ),
+            background: SolidColor(0.0, 0.0, 0.0, 0.0),
+            children: [
+                Label(
+                    transform: (
+                        id: "notice",
+                        width: 320.,
+                        height: 25.,
+                        tab_order: 1,
+                        anchor: Middle,
+                        stretch: XY( x_margin: 0., y_margin: 0., keep_aspect_ratio: false ),
+                    ),
+                    text: (
+                        text: "YOU TEND TO BE A...",
+                        font: File("font/square.ttf", ("TTF", ())),
+                        font_size: 25.,
+                        color: (1.0, 1.0, 1.0, 1.0),
+                        align: Middle,
+                    )
+                ),
+            ]
+        ),
+        Button(
+            transform: (
+                id: "as_server",
+                x: 250.,
+                y: -250.,
+                width: 200.,
+                height: 40.,
+                tab_order: 9,
+                anchor: TopLeft,
+                mouse_reactive: true,
+            ),
+            button: (
+                 text: "-> Server",
+                 font: File("font/square.ttf", ("TTF", ())),
+                 font_size: 30.,
+                 normal_text_color: (0.0, 0.0, 0.0, 1.0),
+                 normal_image: SolidColor(1.0, 1.0, 1.0, 1.0),
+                 hover_text_color: (0.0, 0.0, 0.0, 1.0),
+                 hover_image: SolidColor(0.8, 0.8, 0.8, 1.0),
+                 press_text_color: (1.0, 1.0, 1.0, 1.0),
+                 press_image: SolidColor(0.0, 0.0, 0.0, 1.0),
+            ),
+        ),
+        Button(
+            transform: (
+                id: "as_client",
+                x: 250.,
+                y: -300.,
+                width: 200.,
+                height: 40.,
+                tab_order: 9,
+                anchor: TopLeft,
+                mouse_reactive: true,
+            ),
+            button: (
+                 text: "-> Client",
+                 font: File("font/square.ttf", ("TTF", ())),
+                 font_size: 30.,
+                 normal_text_color: (0.0, 0.0, 0.0, 1.0),
+                 normal_image: SolidColor(1.0, 1.0, 1.0, 1.0),
+                 hover_text_color: (0.0, 0.0, 0.0, 1.0),
+                 hover_image: SolidColor(0.8, 0.8, 0.8, 1.0),
+                 press_text_color: (1.0, 1.0, 1.0, 1.0),
+                 press_image: SolidColor(0.0, 0.0, 0.0, 1.0),
+            ),
+        ),
+    ],
+)
