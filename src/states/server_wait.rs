@@ -1,6 +1,5 @@
-use amethyst::{SimpleState, GameData, StateData, SimpleTrans, Trans};
-use amethyst::ui::{UiCreator};
-use std::sync::Arc;
+use amethyst::{SimpleState, GameData, StateData};
+use amethyst::ui::UiCreator;
 
 pub struct ServerWait {
 }
@@ -11,10 +10,5 @@ impl SimpleState for ServerWait {
         world.exec(|mut creator: UiCreator<'_>| {
             creator.create("ui/server_wait.ron", ());
         });
-    }
-
-    fn update(&mut self, _data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
-
-        Trans::None
     }
 }
