@@ -6,9 +6,12 @@ edition = "2018"
 
 [dependencies]
 amethyst = "0.15.0"
+rmp-serde = "0.14.3"
+ringbuf = "0.2.1"
 
 [features]
 default = ["vulkan"]
 empty = ["amethyst/empty"]
 metal = ["amethyst/metal"]
 vulkan = ["amethyst/vulkan"]
+no-slow-safety-checks = ["amethyst/no-slow-safety-checks"]
