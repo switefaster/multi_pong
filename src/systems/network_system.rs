@@ -1,18 +1,18 @@
 use amethyst::{
     core::{
-        shrev::{EventChannel, ReaderId},
+        shrev::EventChannel,
         SystemDesc,
     },
     derive::SystemDesc,
-    ecs::{DispatcherBuilder, Read, System, SystemData, World, Write},
-    prelude::*,
+    ecs::{System, SystemData, Write},
 };
 use crate::network::{ResponseState, Instruction};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 
+#[derive(Default)]
 pub struct NetworkCommunication {
-    receiver: UnboundedReceiver<ResponseState>,
-    sender: UnboundedSender<Instruction>,
+    receiver: Option<UnboundedReceiver<ResponseState>>,
+    sender: Option<UnboundedSender<Instruction>>,
 }
 
 impl NetworkCommunication {
@@ -21,8 +21,8 @@ impl NetworkCommunication {
         sender: UnboundedSender<Instruction>,
     ) -> Self {
         Self {
-            receiver,
-            sender,
+            receiver: Some(receiver),
+            sender: Some(sender),
         }
     }
 }
@@ -33,12 +33,14 @@ pub struct NetworkBroadcastingSystem;
 impl<'a> System<'a> for NetworkBroadcastingSystem {
     type SystemData = (
         Write<'a, EventChannel<ResponseState>>,
-        Read<'a, NetworkCommunication>,
+        Write<'a, NetworkCommunication>,
     );
 
-    fn run(&mut self, (mut event_channel, network_communication): Self::SystemData) {
-        while let Ok(Some(state)) = network_communication.receiver.try_next() {
-            event_channel.single_write(state);
+    fn run(&mut self, (mut event_channel, mut network_communication): Self::SystemData) {
+        if let Some(ref mut comm) = network_communication.receiver {
+            while let Ok(Some(state)) = comm.try_next() {
+                event_channel.single_write(state);
+            }
         }
     }
 }

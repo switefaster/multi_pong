@@ -1,7 +1,7 @@
 use amethyst::{SimpleState, GameData, StateData, StateEvent, SimpleTrans, Trans};
 use amethyst::ecs::Entity;
 use amethyst::input::{StringBindings, is_close_requested};
-use amethyst::prelude::{WorldExt, Builder};
+use amethyst::prelude::WorldExt;
 use amethyst::ui::{UiCreator, UiFinder, UiEventType};
 
 #[derive(Default)]

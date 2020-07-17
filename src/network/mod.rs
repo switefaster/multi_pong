@@ -50,7 +50,7 @@ async fn network_loop(mut from_foreground: UnboundedReceiver<Instruction>, mut t
         while let Some(conn) = incoming.next().await {
             match conn {
                 Err(e) => println!("connection failed: {:?}", e),
-                Ok(mut sock) => {
+                Ok(sock) => {
                     if let Err(e) = tx.try_send(sock) {
                         match e {
                             TrySendError::Full(_sock) => {
