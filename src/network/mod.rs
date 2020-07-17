@@ -91,12 +91,8 @@ async fn network_loop(mut from_foreground: UnboundedReceiver<Instruction>, mut t
                     inst = fg_to => {
                         if let Some(inst) = inst {
                             match inst {
-                                Instruction::Disconnect(action) => {
-                                    match action {
-                                        DisconnectAction::End => break 'main,
-                                        DisconnectAction::WaitNew => continue 'main,
-                                    }
-                                },
+                                Instruction::Disconnect(DisconnectAction::End) => break 'main,
+                                Instruction::Disconnect(DisconnectAction::WaitNew) => continue 'main,
                                 Instruction::SendPacket(packet) => {
                                     serialized.send(packet).await.unwrap();
                                 },
