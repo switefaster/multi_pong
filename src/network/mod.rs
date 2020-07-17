@@ -1,6 +1,11 @@
 use futures::channel::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};
 use std::thread;
-use futures::sink::SinkExt;
+use futures::{
+    select_biased,
+    future::FutureExt,
+    pin_mut,
+    sink::SinkExt
+};
 use tokio::net::TcpListener;
 use tokio::stream::StreamExt;
 use tokio_util::codec::{FramedWrite, LengthDelimitedCodec, FramedRead};
@@ -79,25 +84,31 @@ async fn network_loop(mut from_foreground: UnboundedReceiver<Instruction>, mut t
                     SymmetricalMessagePack::<Packet>::default(),
                 );
             loop {
-                while let Ok(Some(inst)) = from_foreground.try_next() {
-                    match inst {
-                        Instruction::Disconnect(action) => {
-                            match action {
-                                DisconnectAction::End => break 'main,
-                                DisconnectAction::WaitNew => continue 'main,
+                let fg_to = from_foreground.next().fuse();
+                let to_fg = deserialized.next().fuse();
+                pin_mut!(fg_to, to_fg);
+                select_biased! {
+                    inst = fg_to => {
+                        if let Some(inst) = inst {
+                            match inst {
+                                Instruction::Disconnect(action) => {
+                                    match action {
+                                        DisconnectAction::End => break 'main,
+                                        DisconnectAction::WaitNew => continue 'main,
+                                    }
+                                },
+                                Instruction::SendPacket(packet) => {
+                                    serialized.send(packet).await.unwrap();
+                                },
                             }
-                        },
-                        Instruction::SendPacket(packet) => {
-                            serialized.send(packet).await.unwrap();
-                        },
-                    }
-                }
-                //mystery codes below
-                // tokio::spawn(async move {
-                    while let Some(msg) = deserialized.try_next().await.unwrap() {
-                        to_foreground.send(ResponseState::PacketReceived(msg));
-                    }
-                // }).await.unwrap();
+                        }
+                    },
+                    msg = to_fg => {
+                        if let Some(msg) = msg {
+                            to_foreground.send(ResponseState::PacketReceived(msg.unwrap())).await.unwrap();
+                        }
+                    },
+                };
             }
         }
     });
