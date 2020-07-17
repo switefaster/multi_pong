@@ -1,9 +1,10 @@
-use std::sync::mpsc::{SyncSender, Receiver, sync_channel};
+use std::sync::mpsc::{Sender, Receiver, channel};
 use std::thread;
-use std::net::TcpStream;
-use std::io::Write;
-
-pub const MAX_PACKET: usize = 200;
+use tokio::net::TcpListener;
+use tokio::stream::StreamExt;
+use tokio_util::codec::{FramedWrite, LengthDelimitedCodec, FramedRead};
+use tokio_serde::formats::SymmetricalMessagePack;
+use async_std::sync::TrySendError;
 
 pub enum DisconnectAction {
     End,
@@ -15,92 +16,89 @@ pub enum Instruction {
     Disconnect(DisconnectAction),
 }
 
+pub enum ResponseState {
+    ConnectionAbort,
+    PacketReceived(Packet),
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum Packet {
 
 }
 
-pub fn create_background_loop() -> (SyncSender<Instruction>, Receiver<Result<Packet, std::io::Error>>) {
-    let (to_background, from_foreground) = sync_channel(MAX_PACKET);
-    let (to_foreground, from_background) = sync_channel(MAX_PACKET);
+pub fn create_background_loop() -> (Sender<Instruction>, Receiver<ResponseState>) {
+    let (to_background, from_foreground) = channel();
+    let (to_foreground, from_background) = channel();
     thread::spawn(move || {
-        match std::net::TcpListener::bind("0.0.0.0:4001") {
-            Ok(listener) => {
-                if let Err(error) = listener.set_nonblocking(true) {
-                    to_foreground.send(Err(error)).unwrap();
-                }
-                let mut current_connection: Option<TcpStream> = None;
-                let read_buffer = ringbuf::RingBuffer::<u8>::new(2048);
-                'main: loop {
-                    if let None = current_connection {
-                        for connection in listener.incoming() {
-                            if let Ok(connection) = connection {
-                                current_connection = Some(connection);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(mut connection) = current_connection.take() {
-                        while let Ok(inst) = from_foreground.try_recv() {
-                            match inst {
-                                Instruction::Disconnect(action) => {
-                                    match action {
-                                        DisconnectAction::WaitNew => continue 'main,
-                                        DisconnectAction::End => break 'main,
-                                    }
-                                },
-                                Instruction::SendPacket(packet) => {
-                                    let data = serialize_with_header(packet);
-                                    if let Err(error) = connection.write(data.as_slice()) {
-                                        to_foreground.send(Err(error)).unwrap();
-                                    }
-                                    if let Err(error) = connection.flush() {
-                                        to_foreground.send(Err(error)).unwrap();
-                                    }
-                                },
-                            }
-                        }
-                        let (mut prod, mut cons) = read_buffer.split();
-                        prod.read_from(&mut connection, None);
-                        loop {
-                            if cons.remaining() < 8 {
-                                break;
-                            }
-                            let mut header: usize = 0;
-                            cons.access(|(_, new)| {
-                                for i in 0..7 {
-                                    header |= (new[i] as usize) << (i << 3);
-                                }
-                            });
-                            if cons.remaining() < header + 8 {
-                                break;
-                            }
-                            let _ = cons.read_bytes(8);
-                            let data = cons.read_bytes(header).unwrap();
-                            let packet: Packet = rmp_serde::from_read(data.as_slice()).unwrap();
-                            to_foreground.send(Ok(packet));
-                        }
-                        current_connection = Some(connection);
-                    }
-                }
-            },
-            Err(error) => {
-                to_foreground.send(Err(error)).unwrap();
-            },
-        }
+        network_loop(from_foreground, to_foreground);
     });
     (to_background, from_background)
 }
 
-fn serialize_with_header(packet: Packet) -> Vec<u8> {
-    let mut data = rmp_serde::to_vec(&packet).unwrap();
-    let len = data.len();
-    let header: [u8; 8] = Default::default();
-    let mut byte = 8u32;
-    while byte >= 0 {
-        header[8u32 - byte] = len & ((0xFF) << (byte - 1));
-        byte -= 1;
-    }
-    data.splice(..0, header);
-    data
+#[tokio::main]
+async fn network_loop(from_foreground: Receiver<Instruction>, to_foreground: Sender<ResponseState>) {
+    let mut listener = TcpListener::bind("0.0.0.0:4001").await.unwrap();
+    let (tx, rx) = async_std::sync::channel(1);
+    let server = async move {
+        let mut incoming = listener.incoming();
+        while let Some(conn) = incoming.next().await {
+            match conn {
+                Err(e) => println!("connection failed: {:?}", e),
+                Ok(mut sock) => {
+                    if let Err(e) = tx.try_send(sock) {
+                        match e {
+                            TrySendError::Full(_sock) => {
+                                //notify the connection
+                            },
+                            TrySendError::Disconnected(_sock) => {
+                                //notify the connection
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    tokio::spawn(async move {
+        'main: loop {
+            let mut socket = rx.recv().await.unwrap();
+            let (reader, writer) = socket.split();
+            let length_delimited_write =
+                FramedWrite::new(writer, LengthDelimitedCodec::new());
+            let mut serialized =
+                tokio_serde::SymmetricallyFramed::new(
+                    length_delimited_write,
+                    SymmetricalMessagePack::<Packet>::default(),
+                );
+            let length_delimited_read =
+                FramedRead::new(reader, LengthDelimitedCodec::new());
+            let mut deserialized =
+                tokio_serde::SymmetricallyFramed::new(
+                    length_delimited_read,
+                    SymmetricalMessagePack::<Packet>::default(),
+                );
+            loop {
+                while let Ok(inst) = from_foreground.try_recv() {
+                    match inst {
+                        Instruction::Disconnect(action) => {
+                            match action {
+                                DisconnectAction::End => break 'main,
+                                DisconnectAction::WaitNew => continue 'main,
+                            }
+                        },
+                        Instruction::SendPacket(packet) => {
+                            serialized.send(packet).await.unwrap();
+                        },
+                    }
+                }
+                //mystery codes below
+                tokio::spawn(async move {
+                    while let Some(msg) = deserialized.try_next().await.unwrap() {
+                        to_foreground.send(ResponseState::PacketReceived(msg));
+                    }
+                }).await.unwrap();
+            }
+        }
+    });
+    server.await
 }
