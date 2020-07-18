@@ -52,7 +52,6 @@ impl SimpleState for PlayerName {
                 if let Some(submit) = self.submit_button {
                     if event.event_type == UiEventType::Click && event.target.id() == submit.id() {
                         if let Some(input) = self.name_input {
-                            todo!("lifetime is to fix");
                             let mut storage = data.world.write_storage::<UiText>();
                             let text = storage.get(input).unwrap();
                             if text.text.is_empty() {
@@ -63,8 +62,10 @@ impl SimpleState for PlayerName {
                                     return Trans::None
                                 }
                             } else {
+                                let text = text.text.clone();
+                                std::mem::drop(storage);
                                 data.world.insert(PlayerNameResource::new(
-                                    Some(text.text.clone()),
+                                    Some(text),
                                     None,
                                 ));
                             }
