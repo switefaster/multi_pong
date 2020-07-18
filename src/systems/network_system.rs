@@ -6,26 +6,8 @@ use amethyst::{
     derive::SystemDesc,
     ecs::{System, SystemData, Write},
 };
-use crate::network::{ResponseState, Instruction};
+use crate::network::{ResponseState, Instruction, NetworkCommunication};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
-
-#[derive(Default)]
-pub struct NetworkCommunication {
-    receiver: Option<UnboundedReceiver<ResponseState>>,
-    sender: Option<UnboundedSender<Instruction>>,
-}
-
-impl NetworkCommunication {
-    pub fn new(
-        receiver: UnboundedReceiver<ResponseState>,
-        sender: UnboundedSender<Instruction>,
-    ) -> Self {
-        Self {
-            receiver: Some(receiver),
-            sender: Some(sender),
-        }
-    }
-}
 
 #[derive(SystemDesc)]
 pub struct NetworkBroadcastingSystem;

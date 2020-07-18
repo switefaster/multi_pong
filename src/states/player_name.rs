@@ -11,6 +11,21 @@ pub struct PlayerName {
     notice_text: Option<Entity>,
 }
 
+#[derive(Default)]
+pub struct PlayerNameResource {
+    pub(crate) my_name: Option<String>,
+    pub(crate) rival_name: Option<String>,
+}
+
+impl PlayerNameResource {
+    pub fn new(my_name: Option<String>, rival_name: Option<String>) -> Self {
+        Self {
+            my_name,
+            rival_name,
+        }
+    }
+}
+
 impl SimpleState for PlayerName {
     fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
         let world = data.world;
@@ -37,6 +52,7 @@ impl SimpleState for PlayerName {
                 if let Some(submit) = self.submit_button {
                     if event.event_type == UiEventType::Click && event.target.id() == submit.id() {
                         if let Some(input) = self.name_input {
+                            todo!("lifetime is to fix");
                             let mut storage = data.world.write_storage::<UiText>();
                             let text = storage.get(input).unwrap();
                             if text.text.is_empty() {
@@ -46,6 +62,11 @@ impl SimpleState for PlayerName {
                                     notice.color = [1.0, 0.0, 0.0, 1.0];
                                     return Trans::None
                                 }
+                            } else {
+                                data.world.insert(PlayerNameResource::new(
+                                    Some(text.text.clone()),
+                                    None,
+                                ));
                             }
                         }
                         return Trans::Push(Box::new(super::ModeSelect::default()))
