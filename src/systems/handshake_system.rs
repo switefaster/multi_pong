@@ -50,9 +50,9 @@ impl<'a> System<'a> for HandshakeSystem {
                 let is_server = comm.is_server();
                 if let Some(ref mut sender) = comm.sender {
                     if is_server {
-                        sender.send(Instruction::SendPacket(Packet::Handshake {
+                        sender.unbounded_send(Instruction::SendPacket(Packet::Handshake {
                             player_name: name.my_name.clone().unwrap(),
-                        }));
+                        })).unwrap();
                     }
                     name.rival_name = Some(player_name.clone());
                     *state = CurrentState::InGame;
