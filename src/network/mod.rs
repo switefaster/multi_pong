@@ -12,6 +12,56 @@ use tokio_util::codec::{FramedWrite, LengthDelimitedCodec, FramedRead};
 use tokio_serde::formats::SymmetricalMessagePack;
 use async_std::sync::TrySendError;
 
+pub enum Side {
+    Server,
+    Client,
+    //This type exists only for Default implementation
+    //Because we don't want the system to run either Server or Client logic by default
+    //even if it's logically impossible that the system starts running before we insert
+    //NetworkCommunication as Resource which we guarantee that it will only be created
+    //with either Server or Client
+    Unsure,
+}
+
+impl Default for Side {
+    fn default() -> Self {
+        Self::Unsure
+    }
+}
+
+#[derive(Default)]
+pub struct NetworkCommunication {
+    pub(crate) receiver: Option<UnboundedReceiver<ResponseState>>,
+    pub(crate) sender: Option<UnboundedSender<Instruction>>,
+    side: Side,
+}
+
+impl NetworkCommunication {
+    pub fn new(
+        receiver: UnboundedReceiver<ResponseState>,
+        sender: UnboundedSender<Instruction>,
+        side: Side,
+    ) -> Self {
+        Self {
+            receiver: Some(receiver),
+            sender: Some(sender),
+            side,
+        }
+    }
+
+    pub fn is_client(&self) -> bool {
+        if let Side::Client = self.side {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_server(&self) -> bool {
+        !self.is_client()
+    }
+}
+
 pub enum DisconnectAction {
     End,
     WaitNew,
@@ -29,16 +79,26 @@ pub enum ResponseState {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum Packet {
-
+    Handshake {
+        player_name: String,
+    },
 }
 
-pub fn create_background_loop() -> (UnboundedSender<Instruction>, UnboundedReceiver<ResponseState>) {
+pub fn create_server_background_loop() -> NetworkCommunication {
     let (to_background, from_foreground) = unbounded();
     let (to_foreground, from_background) = unbounded();
     thread::spawn(move || {
         network_loop(from_foreground, to_foreground);
     });
-    (to_background, from_background)
+    NetworkCommunication::new(
+        from_background,
+        to_background,
+        Side::Server,
+    )
+}
+
+pub fn create_client_background_loop() -> NetworkCommunication {
+    todo!("client background loop")
 }
 
 #[tokio::main]
@@ -58,6 +118,7 @@ async fn network_loop(mut from_foreground: UnboundedReceiver<Instruction>, mut t
                             },
                             TrySendError::Disconnected(_sock) => {
                                 //notify the connection
+                                break;
                             }
                         }
                     }
