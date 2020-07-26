@@ -7,7 +7,6 @@ use amethyst::{
     ecs::{System, SystemData, Write},
 };
 use crate::network::{ResponseState, Instruction, NetworkCommunication};
-use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 
 #[derive(SystemDesc)]
 pub struct NetworkBroadcastingSystem;

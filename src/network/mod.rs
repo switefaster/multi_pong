@@ -82,6 +82,9 @@ pub enum Packet {
     Handshake {
         player_name: String,
     },
+    PaddleDisplace {
+        position: f32,
+    },
 }
 
 pub fn create_server_background_loop() -> NetworkCommunication {
