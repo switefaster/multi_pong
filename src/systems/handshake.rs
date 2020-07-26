@@ -3,11 +3,9 @@ use amethyst::{
         shrev::{EventChannel, ReaderId},
         SystemDesc,
     },
-    derive::SystemDesc,
     ecs::{Read, System, SystemData, Write},
 };
 use crate::network::{Packet, Instruction, NetworkCommunication, ResponseState};
-use futures::SinkExt;
 use crate::states::{PlayerNameResource, CurrentState};
 use amethyst::prelude::World;
 

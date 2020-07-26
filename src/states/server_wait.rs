@@ -1,6 +1,6 @@
 use amethyst::{SimpleState, GameData, StateData, SimpleTrans, Trans};
 use amethyst::ui::UiCreator;
-use crate::network::{create_server_background_loop, NetworkCommunication};
+use crate::network::create_server_background_loop;
 use amethyst::prelude::WorldExt;
 use crate::states::CurrentState;
 
