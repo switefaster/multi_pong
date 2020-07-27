@@ -116,6 +116,7 @@ pub fn create_client_background_loop<A: 'static + ToSocketAddrs + Send + Sync>(a
 #[tokio::main]
 async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: UnboundedReceiver<Instruction>, mut to_foreground: UnboundedSender<ResponseState>) {
     let mut socket = TcpStream::connect(addr).await.unwrap();
+    socket.set_nodelay(true).unwrap();
     let client = async move {
         let (reader, writer) = socket.split();
         let length_delimited_write =
@@ -186,6 +187,7 @@ async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>
     tokio::spawn(async move {
         'main: loop {
             let mut socket = rx.recv().await.unwrap();
+            socket.set_nodelay(true).unwrap();
             let (reader, writer) = socket.split();
             let length_delimited_write =
                 FramedWrite::new(writer, LengthDelimitedCodec::new());
