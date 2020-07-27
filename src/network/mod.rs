@@ -1,5 +1,6 @@
 use futures::channel::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};
 use std::thread;
+use std::time::Instant;
 use futures::{
     select_biased,
     future::FutureExt,
@@ -85,6 +86,8 @@ pub enum Packet {
     PaddleDisplace {
         position: f32,
     },
+    Ping(i32),
+    Pong(i32),
 }
 
 pub fn create_server_background_loop() -> NetworkCommunication {
@@ -133,7 +136,14 @@ async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: Unb
                 length_delimited_read,
                 SymmetricalMessagePack::<Packet>::default(),
             );
+        let mut id = 0;
+        let mut now = Instant::now();
         loop {
+            if now.elapsed().as_secs() >= 1 {
+                now = Instant::now();
+                id += 1;
+                serialized.send(Packet::Ping(id)).await.unwrap();
+            }
             let fg_to = from_foreground.next().fuse();
             let to_fg = deserialized.next().fuse();
             pin_mut!(fg_to, to_fg);
@@ -150,7 +160,13 @@ async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: Unb
                 },
                 msg = to_fg => {
                     if let Some(msg) = msg {
-                        to_foreground.send(ResponseState::PacketReceived(msg.unwrap())).await.unwrap();
+                        match msg.unwrap() {
+                            Packet::Ping(packet_id) => serialized.send(Packet::Pong(packet_id)).await.unwrap(),
+                            Packet::Pong(packet_id) => if packet_id == id {
+                                println!("Ping: {}", now.elapsed().as_millis());
+                            },
+                            others => to_foreground.send(ResponseState::PacketReceived(others)).await.unwrap()
+                        }
                     }
                 },
             };
@@ -203,7 +219,14 @@ async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>
                     length_delimited_read,
                     SymmetricalMessagePack::<Packet>::default(),
                 );
+            let mut id = 0;
+            let mut now = Instant::now();
             loop {
+                if now.elapsed().as_secs() >= 1 {
+                    now = Instant::now();
+                    id += 1;
+                    serialized.send(Packet::Ping(id)).await.unwrap();
+                }
                 let fg_to = from_foreground.next().fuse();
                 let to_fg = deserialized.next().fuse();
                 pin_mut!(fg_to, to_fg);
@@ -221,7 +244,13 @@ async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>
                     },
                     msg = to_fg => {
                         if let Some(msg) = msg {
-                            to_foreground.send(ResponseState::PacketReceived(msg.unwrap())).await.unwrap();
+                            match msg.unwrap() {
+                                Packet::Ping(packet_id) => serialized.send(Packet::Pong(packet_id)).await.unwrap(),
+                                Packet::Pong(packet_id) => if packet_id == id {
+                                    println!("Ping: {}", now.elapsed().as_millis());
+                                },
+                                others => to_foreground.send(ResponseState::PacketReceived(others)).await.unwrap()
+                            }
                         }
                     },
                 };
