@@ -1,12 +1,11 @@
 use amethyst::{
     core::{
         shrev::EventChannel,
-        SystemDesc,
     },
     derive::SystemDesc,
     ecs::{System, SystemData, Write},
 };
-use crate::network::{ResponseState, Instruction, NetworkCommunication};
+use crate::network::{ResponseState, NetworkCommunication};
 
 #[derive(SystemDesc)]
 pub struct NetworkBroadcastingSystem;

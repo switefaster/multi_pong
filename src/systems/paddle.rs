@@ -2,14 +2,15 @@ use amethyst::{
     core::{
         shrev::{EventChannel, ReaderId},
         SystemDesc,
+        timing::Time,
         transform::Transform,
     },
-    ecs::{Component, DenseVecStorage, Join, Read, ReadStorage, System, SystemData, WriteStorage},
+    ecs::{Component, DenseVecStorage, Join, Read, ReadStorage, System, SystemData, Write, WriteStorage},
     input::{InputHandler, StringBindings},
 };
 use amethyst::prelude::World;
 use crate::constants::{PADDLE_WIDTH, PADDLE_HEIGHT, SCENE_HEIGHT};
-use crate::network::ResponseState;
+use crate::network::{ResponseState, NetworkCommunication, Instruction, Packet};
 use crate::network::ResponseState::PacketReceived;
 use crate::network::Packet::PaddleDisplace;
 
@@ -40,25 +41,31 @@ impl PaddleSystem {
 
 impl<'a> System<'a> for PaddleSystem {
     type SystemData = (
+        Read<'a, Time>,
+        Write<'a, NetworkCommunication>,
         Read<'a, InputHandler<StringBindings>>,
         Read<'a, EventChannel<ResponseState>>,
         WriteStorage<'a, Transform>,
         ReadStorage<'a, Paddle>,
     );
 
-    fn run(&mut self, (input, event_channel, mut transforms, paddles): Self::SystemData) {
+    fn run(&mut self, (time, mut comm, input, event_channel, mut transforms, paddles): Self::SystemData) {
         for (transform, paddle) in (&mut transforms, &paddles).join() {
             match paddle.role {
                 Role::Own => {
                     let movement = input.axis_value("paddle");
                     if let Some(mv_amount) = movement {
-                        let scaled_amount = 1.2 * mv_amount as f32;
+                        let scaled_amount = 36.0 * mv_amount as f32 * time.delta_seconds();
                         let paddle_y = transform.translation().y;
-                        transform.set_translation_y(
-                            (paddle_y + scaled_amount)
-                                .min(SCENE_HEIGHT - PADDLE_HEIGHT * 0.5)
-                                .max(PADDLE_HEIGHT * 0.5),
-                        );
+                        let position = (paddle_y + scaled_amount)
+                            .min(SCENE_HEIGHT - PADDLE_HEIGHT * 0.5)
+                            .max(PADDLE_HEIGHT * 0.5);
+                        transform.set_translation_y(position);
+                        if let Some(ref mut sender) = comm.sender {
+                            sender.unbounded_send(Instruction::SendPacket(Packet::PaddleDisplace {
+                                position,
+                            })).unwrap();
+                        }
                     }
                 },
                 Role::Hostile => {

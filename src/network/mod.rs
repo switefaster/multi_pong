@@ -6,7 +6,7 @@ use futures::{
     pin_mut,
     sink::SinkExt
 };
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::stream::StreamExt;
 use tokio_util::codec::{FramedWrite, LengthDelimitedCodec, FramedRead};
 use tokio_serde::formats::SymmetricalMessagePack;
@@ -91,7 +91,7 @@ pub fn create_server_background_loop() -> NetworkCommunication {
     let (to_background, from_foreground) = unbounded();
     let (to_foreground, from_background) = unbounded();
     thread::spawn(move || {
-        network_loop(from_foreground, to_foreground);
+        server_network_loop(from_foreground, to_foreground);
     });
     NetworkCommunication::new(
         from_background,
@@ -100,12 +100,66 @@ pub fn create_server_background_loop() -> NetworkCommunication {
     )
 }
 
-pub fn create_client_background_loop() -> NetworkCommunication {
-    todo!("client background loop")
+pub fn create_client_background_loop<A: 'static + ToSocketAddrs + Send + Sync>(addr: A) -> NetworkCommunication {
+    let (to_background, from_foreground) = unbounded();
+    let (to_foreground, from_background) = unbounded();
+    thread::spawn(move || {
+        client_network_loop(addr, from_foreground, to_foreground);
+    });
+    NetworkCommunication::new(
+        from_background,
+        to_background,
+        Side::Client,
+    )
 }
 
 #[tokio::main]
-async fn network_loop(mut from_foreground: UnboundedReceiver<Instruction>, mut to_foreground: UnboundedSender<ResponseState>) {
+async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: UnboundedReceiver<Instruction>, mut to_foreground: UnboundedSender<ResponseState>) {
+    let mut socket = TcpStream::connect(addr).await.unwrap();
+    let client = async move {
+        let (reader, writer) = socket.split();
+        let length_delimited_write =
+            FramedWrite::new(writer, LengthDelimitedCodec::new());
+        let mut serialized =
+            tokio_serde::SymmetricallyFramed::new(
+                length_delimited_write,
+                SymmetricalMessagePack::<Packet>::default(),
+            );
+        let length_delimited_read =
+            FramedRead::new(reader, LengthDelimitedCodec::new());
+        let mut deserialized =
+            tokio_serde::SymmetricallyFramed::new(
+                length_delimited_read,
+                SymmetricalMessagePack::<Packet>::default(),
+            );
+        loop {
+            let fg_to = from_foreground.next().fuse();
+            let to_fg = deserialized.next().fuse();
+            pin_mut!(fg_to, to_fg);
+            select_biased! {
+                inst = fg_to => {
+                    if let Some(inst) = inst {
+                        match inst {
+                            Instruction::Disconnect(_) => break,
+                            Instruction::SendPacket(packet) => {
+                                serialized.send(packet).await.unwrap();
+                            },
+                        }
+                    }
+                },
+                msg = to_fg => {
+                    if let Some(msg) = msg {
+                        to_foreground.send(ResponseState::PacketReceived(msg.unwrap())).await.unwrap();
+                    }
+                },
+            };
+        }
+    };
+    client.await
+}
+
+#[tokio::main]
+async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>, mut to_foreground: UnboundedSender<ResponseState>) {
     let mut listener = TcpListener::bind("0.0.0.0:4001").await.unwrap();
     let (tx, rx) = async_std::sync::channel(1);
     let server = async move {
