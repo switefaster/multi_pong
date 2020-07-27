@@ -1,6 +1,6 @@
 use futures::channel::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};
 use std::thread;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use futures::{
     select_biased,
     future::FutureExt,
@@ -8,6 +8,7 @@ use futures::{
     sink::SinkExt
 };
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+use tokio::time::delay_for;
 use tokio::stream::StreamExt;
 use tokio_util::codec::{FramedWrite, LengthDelimitedCodec, FramedRead};
 use tokio_serde::formats::SymmetricalMessagePack;
@@ -120,6 +121,7 @@ pub fn create_client_background_loop<A: 'static + ToSocketAddrs + Send + Sync>(a
 async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: UnboundedReceiver<Instruction>, mut to_foreground: UnboundedSender<ResponseState>) {
     let mut socket = TcpStream::connect(addr).await.unwrap();
     socket.set_nodelay(true).unwrap();
+    socket.set_ttl(128).unwrap();
     let client = async move {
         let (reader, writer) = socket.split();
         let length_delimited_write =
@@ -149,10 +151,12 @@ async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: Unb
                 id += 1;
                 serialized.send(Packet::Ping(id)).await.unwrap();
             }
+            let delay = delay_for(Duration::new(0, 10_000_000)).fuse();
             let fg_to = from_foreground.next().fuse();
             let to_fg = deserialized.next().fuse();
-            pin_mut!(fg_to, to_fg);
+            pin_mut!(delay, fg_to, to_fg);
             select_biased! {
+                _ = delay => (),
                 inst = fg_to => {
                     if let Some(inst) = inst {
                         match inst {
@@ -210,6 +214,7 @@ async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>
         'main: loop {
             let mut socket = rx.recv().await.unwrap();
             socket.set_nodelay(true).unwrap();
+            socket.set_ttl(128).unwrap();
             let (reader, writer) = socket.split();
             let length_delimited_write =
                 FramedWrite::new(writer, LengthDelimitedCodec::new());
@@ -238,10 +243,12 @@ async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>
                     id += 1;
                     serialized.send(Packet::Ping(id)).await.unwrap();
                 }
+                let delay = delay_for(Duration::new(0, 10_000_000)).fuse();
                 let fg_to = from_foreground.next().fuse();
                 let to_fg = deserialized.next().fuse();
-                pin_mut!(fg_to, to_fg);
+                pin_mut!(delay, fg_to, to_fg);
                 select_biased! {
+                    _ = delay => (),
                     inst = fg_to => {
                         if let Some(inst) = inst {
                             match inst {
