@@ -138,8 +138,13 @@ async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: Unb
             );
         let mut id = 0;
         let mut now = Instant::now();
+        let mut pong_received = true;
         loop {
             if now.elapsed().as_secs() >= 1 {
+                if !pong_received {
+                    println!("ping took more than 1s");
+                }
+                pong_received = false;
                 now = Instant::now();
                 id += 1;
                 serialized.send(Packet::Ping(id)).await.unwrap();
@@ -164,6 +169,7 @@ async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: Unb
                             Packet::Ping(packet_id) => serialized.send(Packet::Pong(packet_id)).await.unwrap(),
                             Packet::Pong(packet_id) => if packet_id == id {
                                 println!("Ping: {}", now.elapsed().as_millis());
+                                pong_received = true;
                             },
                             others => to_foreground.send(ResponseState::PacketReceived(others)).await.unwrap()
                         }
@@ -221,8 +227,13 @@ async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>
                 );
             let mut id = 0;
             let mut now = Instant::now();
+            let mut pong_received = true;
             loop {
                 if now.elapsed().as_secs() >= 1 {
+                    if !pong_received {
+                        println!("ping took more than 1s");
+                    }
+                    pong_received = false;
                     now = Instant::now();
                     id += 1;
                     serialized.send(Packet::Ping(id)).await.unwrap();
@@ -248,6 +259,7 @@ async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>
                                 Packet::Ping(packet_id) => serialized.send(Packet::Pong(packet_id)).await.unwrap(),
                                 Packet::Pong(packet_id) => if packet_id == id {
                                     println!("Ping: {}", now.elapsed().as_millis());
+                                    pong_received = true;
                                 },
                                 others => to_foreground.send(ResponseState::PacketReceived(others)).await.unwrap()
                             }
