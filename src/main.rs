@@ -15,6 +15,7 @@ use amethyst::{
     ui::{RenderUi, UiBundle},
     utils::application_root_dir,
 };
+use crate::systems::MultiPongBundle;
 
 fn main() -> amethyst::Result<()> {
     amethyst::start_logger(Default::default());
@@ -41,7 +42,8 @@ fn main() -> amethyst::Result<()> {
             )?
             .with_bundle(TransformBundle::new())?
             .with_bundle(input_bundle)?
-            .with_bundle(UiBundle::<StringBindings>::new())?;
+            .with_bundle(UiBundle::<StringBindings>::new())?
+            .with_bundle(MultiPongBundle)?;
 
     let assets_dir = app_root.join("assets");
     let mut game = Application::new(assets_dir, states::PlayerName::default(), game_data)?;

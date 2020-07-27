@@ -11,7 +11,7 @@ pub struct PlayerName {
     notice_text: Option<Entity>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct PlayerNameResource {
     pub(crate) my_name: Option<String>,
     pub(crate) rival_name: Option<String>,
@@ -50,7 +50,7 @@ impl SimpleState for PlayerName {
             }
             StateEvent::Ui(event) => {
                 if let Some(submit) = self.submit_button {
-                    if event.event_type == UiEventType::Click && event.target.id() == submit.id() {
+                    if event.event_type == UiEventType::Click && event.target == submit {
                         if let Some(input) = self.name_input {
                             let mut storage = data.world.write_storage::<UiText>();
                             let text = storage.get(input).unwrap();

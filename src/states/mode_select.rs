@@ -35,12 +35,12 @@ impl SimpleState for ModeSelect {
             StateEvent::Ui(event) => {
                 if event.event_type == UiEventType::Click {
                     if let Some(button) = self.client_button {
-                        if button.id() == event.target.id() {
-                            return Trans::Push(Box::new(super::ClientConnect))
+                        if button == event.target {
+                            return Trans::Push(Box::new(super::ClientAddrInput::default()))
                         }
                     }
                     if let Some(button) = self.server_button {
-                        if button.id() == event.target.id() {
+                        if button == event.target {
                             return Trans::Push(Box::new(super::ServerWait))
                         }
                     }

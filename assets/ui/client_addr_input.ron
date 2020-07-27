@@ -79,5 +79,28 @@ Container(
                 ),
             ]
         ),
+        Button(
+            transform: (
+                id: "connect",
+                x: 250.,
+                y: -300.,
+                width: 200.,
+                height: 40.,
+                tab_order: 9,
+                anchor: TopLeft,
+                mouse_reactive: true,
+            ),
+            button: (
+                text: "> Connect <",
+                font: File("font/square.ttf", ("TTF", ())),
+                font_size: 30.,
+                normal_text_color: (0.0, 0.0, 0.0, 1.0),
+                normal_image: SolidColor(1.0, 1.0, 1.0, 1.0),
+                hover_text_color: (0.0, 0.0, 0.0, 1.0),
+                hover_image: SolidColor(0.8, 0.8, 0.8, 1.0),
+                press_text_color: (1.0, 1.0, 1.0, 1.0),
+                press_image: SolidColor(0.0, 0.0, 0.0, 1.0),
+            ),
+        ),
     ],
 )

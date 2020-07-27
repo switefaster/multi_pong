@@ -3,8 +3,9 @@ use amethyst::{
     core::transform::Transform,
     prelude::*,
     renderer::{Camera, ImageFormat, SpriteRender, SpriteSheet, SpriteSheetFormat, Texture},
+    ui::{Anchor, TtfFormat, UiText, UiTransform},
 };
-use crate::states::CurrentState;
+use crate::states::{CurrentState, PlayerNameResource};
 use crate::constants::{SCENE_WIDTH, SCENE_HEIGHT, PADDLE_WIDTH};
 use crate::systems::{Paddle, Role};
 
@@ -16,6 +17,7 @@ impl SimpleState for InGame {
 
         setup_camera(data.world);
         setup_paddles(data.world, sprite_sheet);
+        setup_name_tag(data.world);
     }
 
     fn on_resume(&mut self, data: StateData<'_, GameData<'_, '_>>) {
@@ -68,6 +70,58 @@ fn setup_ball() {
 
 fn setup_score() {
 
+}
+
+fn setup_name_tag(world: &mut World) {
+    let name_resource = (*world.read_resource::<PlayerNameResource>()).clone();
+    let font = world.read_resource::<Loader>().load(
+        "font/square.ttf",
+        TtfFormat,
+        (),
+        &world.read_resource(),
+    );
+    let my_transform = UiTransform::new(
+        "my_name".to_string(),
+        Anchor::TopMiddle,
+        Anchor::Middle,
+        -180.0,
+        -10.0,
+        1.0,
+        150.0,
+        20.0,
+    );
+    let hostile_transform = UiTransform::new(
+        "hostile_name".to_string(),
+        Anchor::TopMiddle,
+        Anchor::Middle,
+        180.0,
+        -10.0,
+        1.0,
+        150.0,
+        20.0,
+    );
+
+    world
+        .create_entity()
+        .with(my_transform)
+        .with(UiText::new(
+            font.clone(),
+            name_resource.my_name.unwrap(),
+            [1.0, 1.0, 1.0, 1.0],
+            20.0,
+        ))
+        .build();
+
+    world
+        .create_entity()
+        .with(hostile_transform)
+        .with(UiText::new(
+            font,
+            name_resource.rival_name.unwrap(),
+            [1.0, 1.0, 1.0, 1.0],
+            20.0,
+        ))
+        .build();
 }
 
 fn load_sprite_sheet(world: &mut World) -> Handle<SpriteSheet> {
