@@ -26,7 +26,7 @@ impl SimpleState for ServerWait {
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
         let state = data.world.read_resource::<CurrentState>();
         if let CurrentState::InGame = *state {
-            Trans::Push(Box::new(super::InGame))
+            Trans::Push(Box::new(super::InGame::default()))
         } else {
             Trans::None
         }

@@ -1,27 +1,51 @@
 use amethyst::{
     assets::{AssetStorage, Loader, Handle},
-    core::transform::Transform,
+    core::{
+        timing::Time,
+        transform::Transform,
+    },
     prelude::*,
     renderer::{Camera, ImageFormat, SpriteRender, SpriteSheet, SpriteSheetFormat, Texture},
     ui::{Anchor, TtfFormat, UiText, UiTransform},
 };
 use crate::states::{CurrentState, PlayerNameResource};
-use crate::constants::{SCENE_WIDTH, SCENE_HEIGHT, PADDLE_WIDTH};
-use crate::systems::{Paddle, Role};
+use crate::constants::{SCENE_WIDTH, SCENE_HEIGHT, PADDLE_WIDTH, BALL_VELOCITY_X, BALL_VELOCITY_Y, BALL_RADIUS};
+use crate::systems::{Paddle, Role, Ball};
+use crate::network::NetworkCommunication;
 
-pub struct InGame;
+#[derive(Default)]
+pub struct InGame {
+    ball_spawn_timer: Option<f32>,
+    sprite_sheet_handle: Option<Handle<SpriteSheet>>,
+}
 
 impl SimpleState for InGame {
     fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
-        let sprite_sheet = load_sprite_sheet(data.world);
+        self.ball_spawn_timer.replace(5.0);
+        self.sprite_sheet_handle.replace(load_sprite_sheet(data.world));
 
         setup_camera(data.world);
-        setup_paddles(data.world, sprite_sheet);
+        setup_paddles(data.world, self.sprite_sheet_handle.clone().unwrap());
         setup_name_tag(data.world);
     }
 
     fn on_resume(&mut self, data: StateData<'_, GameData<'_, '_>>) {
         *data.world.write_resource::<CurrentState>() = CurrentState::InGame;
+    }
+
+    fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
+        if let Some(mut timer) = self.ball_spawn_timer.take() {
+            {
+                let time = data.world.fetch::<Time>();
+                timer -= time.delta_seconds();
+            }
+            if timer <= 0.0 {
+                setup_ball(data.world, self.sprite_sheet_handle.clone().unwrap());
+            } else {
+                self.ball_spawn_timer.replace(timer);
+            }
+        }
+        Trans::None
     }
 }
 
@@ -64,8 +88,40 @@ fn setup_paddles(world: &mut World, sprite_sheet_handle: Handle<SpriteSheet>) {
         .build();
 }
 
-fn setup_ball() {
+fn setup_ball(world: &mut World, sprite_sheet_handle: Handle<SpriteSheet>) {
+    let mut local_transform = Transform::default();
+    local_transform.set_translation_xyz(SCENE_WIDTH * 0.5, SCENE_HEIGHT * 0.5, 0.0);
 
+    let sprite_render = SpriteRender {
+        sprite_sheet: sprite_sheet_handle,
+        sprite_number: 1,
+    };
+
+    let comm = world.read_resource::<NetworkCommunication>();
+    let is_server = comm.is_server();
+    std::mem::drop(comm);
+
+    if is_server {
+        world
+            .create_entity()
+            .with(local_transform)
+            .with(sprite_render)
+            .with(Ball {
+                velocity: [BALL_VELOCITY_X, BALL_VELOCITY_Y],
+                radius: BALL_RADIUS,
+            })
+            .build();
+    } else if !is_server {
+        world
+            .create_entity()
+            .with(local_transform)
+            .with(sprite_render)
+            .with(Ball {
+                velocity: [-BALL_VELOCITY_X, BALL_VELOCITY_Y],
+                radius: BALL_RADIUS,
+            })
+            .build();
+    }
 }
 
 fn setup_score() {
