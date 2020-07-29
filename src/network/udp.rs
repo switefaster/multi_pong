@@ -7,8 +7,9 @@ use futures::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
+use std::num::Wrapping;
 use tokio::{
     net::{
         udp::{RecvHalf, SendHalf},
@@ -29,7 +30,7 @@ struct DataPacket<T> {
     // slot = 0: unreliable packet
     // slot < 0: is ACK, stored in slots[-slot - 1]
     slot: isize,
-    generation: u64,
+    generation: i64,
     data: T,
 }
 
@@ -37,11 +38,11 @@ struct Slot<T>(DataPacket<T>, Instant);
 
 /// Sender struct
 struct Sender<T> {
-    generation: u64,
+    generation: i64,
     timeout: Duration,
     inner: Arc<Mutex<SendHalf>>,
     slots: Vec<Option<Slot<T>>>,
-    slots_generation: Arc<Vec<AtomicU64>>,
+    slots_generation: Arc<Vec<AtomicI64>>,
     slots_used: Arc<Vec<AtomicBool>>,
     notify: Arc<Notify>,
     queue: VecDeque<T>,
@@ -56,7 +57,7 @@ impl<T: Serialize + Clone> Sender<T> {
         let mut slots_used = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             slots.push(None);
-            slots_generation.push(AtomicU64::new(0));
+            slots_generation.push(AtomicI64::new(0));
             slots_used.push(AtomicBool::new(false));
         }
         let slots_generation = Arc::new(slots_generation);
@@ -79,7 +80,7 @@ impl<T: Serialize + Clone> Sender<T> {
         self.notify.clone()
     }
 
-    pub fn get_slots_generation(&self) -> Arc<Vec<AtomicU64>> {
+    pub fn get_slots_generation(&self) -> Arc<Vec<AtomicI64>> {
         self.slots_generation.clone()
     }
 
@@ -237,8 +238,8 @@ impl<T: Serialize + Clone> Sender<T> {
 struct Receiver {
     inner: RecvHalf,
     send_half: Arc<Mutex<SendHalf>>,
-    slots_generation: Arc<Vec<AtomicU64>>,
-    recv_generation: Vec<Option<u64>>,
+    slots_generation: Arc<Vec<AtomicI64>>,
+    recv_generation: Vec<Option<i64>>,
     slots_used: Arc<Vec<AtomicBool>>,
     notify: Arc<Notify>,
 }
@@ -281,11 +282,14 @@ impl Receiver {
             let mut p = from_slice::<DataPacket<T>>(&recv_buffer[0..size]).unwrap();
             if p.slot > 0 {
                 assert!(p.slot <= self.slots_generation.len() as isize);
-                let generation = Some(p.generation);
-                if self.recv_generation[p.slot as usize - 1] == generation {
-                    continue;
+                let current = self.recv_generation[p.slot as usize - 1];
+                if let Some(current) = current {
+                    if Wrapping(p.generation) - Wrapping(current) <= Wrapping(0) {
+                        // not newer, discard it
+                        continue;
+                    }
                 }
-                self.recv_generation[p.slot as usize - 1] = generation;
+                self.recv_generation[p.slot as usize - 1] = Some(p.generation);
                 // send ACK
                 p.slot = -p.slot;
                 // we are assuming this takes a very short time...
