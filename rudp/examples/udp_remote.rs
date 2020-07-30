@@ -1,5 +1,4 @@
 use futures::{channel::mpsc::unbounded, future::FutureExt, pin_mut, select};
-use multi_pong::network::udp;
 use serde::{Deserialize, Serialize};
 use std::env;
 use tokio::{
@@ -84,9 +83,9 @@ async fn main() {
     println!("Connected!");
     // 20ms
     let timeout = Duration::new(0, 20_000_000);
-    let (send, mut recv) = udp::start_udp_loop::<Packet>(socket, timeout, 10, 0);
+    let (send, mut recv) = rudp::start_udp_loop::<Packet>(socket, timeout, 10, 0);
     let start = Instant::now();
-    let (ack_send, mut ack_recv) = unbounded::<udp::PacketType<Packet>>();
+    let (ack_send, mut ack_recv) = unbounded::<rudp::PacketType<Packet>>();
     let recv_task = tokio::spawn(async move {
         loop {
             let p = recv.next().await.unwrap();
@@ -94,9 +93,9 @@ async fn main() {
                 Packet::Ping(reliable, id, timestamp) => {
                     let packet = Packet::Pong(reliable, id, timestamp);
                     let packet = if reliable {
-                        udp::PacketType::Reliable(packet)
+                        rudp::PacketType::Reliable(packet)
                     } else {
-                        udp::PacketType::Unreliable(packet)
+                        rudp::PacketType::Unreliable(packet)
                     };
                     ack_send.unbounded_send(packet).unwrap();
                 }
@@ -128,9 +127,9 @@ async fn main() {
                         let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
                         id += 1;
                         let packet = if reliable {
-                            udp::PacketType::Reliable(packet)
+                            rudp::PacketType::Reliable(packet)
                         } else {
-                            udp::PacketType::Unreliable(packet)
+                            rudp::PacketType::Unreliable(packet)
                         };
                         send.unbounded_send(packet).unwrap();
                     }
