@@ -19,25 +19,13 @@ pub mod udp;
 pub enum Side {
     Server,
     Client,
-    //This type exists only for Default implementation
-    //Because we don't want the system to run either Server or Client logic by default
-    //even if it's logically impossible that the system starts running before we insert
-    //NetworkCommunication as Resource which we guarantee that it will only be created
-    //with either Server or Client
-    Unsure,
-}
-
-impl Default for Side {
-    fn default() -> Self {
-        Self::Unsure
-    }
 }
 
 #[derive(Default)]
 pub struct NetworkCommunication {
     pub(crate) receiver: Option<UnboundedReceiver<ResponseState>>,
     pub(crate) sender: Option<UnboundedSender<Instruction>>,
-    side: Side,
+    side: Option<Side>,
 }
 
 impl NetworkCommunication {
@@ -49,12 +37,12 @@ impl NetworkCommunication {
         Self {
             receiver: Some(receiver),
             sender: Some(sender),
-            side,
+            side: Some(side),
         }
     }
 
     pub fn is_client(&self) -> bool {
-        if let Side::Client = self.side {
+        if let Some(Side::Client) = self.side {
             true
         } else {
             false
@@ -62,7 +50,7 @@ impl NetworkCommunication {
     }
 
     pub fn is_server(&self) -> bool {
-        !self.is_client()
+        !self.is_client() && self.side.is_some()
     }
 }
 
@@ -88,6 +76,10 @@ pub enum Packet {
     },
     PaddleDisplace {
         position: f32,
+    },
+    BallPosVel {
+        position: [f32; 2],
+        velocity: [f32; 2],
     },
     Ping(i32),
     Pong(i32),

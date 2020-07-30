@@ -84,6 +84,7 @@ impl<'a> System<'a> for PaddleSystem {
     }
 }
 
+#[derive(Eq, PartialEq)]
 pub enum Role {
     Own,
     Hostile,
