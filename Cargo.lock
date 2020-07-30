@@ -2212,6 +2212,7 @@ dependencies = [
  "async-std",
  "bincode",
  "futures",
+ "rand 0.7.3",
  "rmp-serde",
  "serde",
  "serde_cbor",
