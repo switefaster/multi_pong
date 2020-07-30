@@ -1,9 +1,10 @@
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    future::{Fuse, FutureExt},
+    future::{Fuse, FutureExt, FusedFuture},
     pin_mut, select_biased, join,
     stream::StreamExt,
 };
+use rand::RngCore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::collections::VecDeque;
@@ -129,6 +130,8 @@ impl<T: Serialize + Clone> Sender<T> {
     fn put_in(&mut self, data: T, empty: usize) -> &DataPacket<T> {
         let generation = self.generation;
         self.generation += 1;
+        self.slots_used[empty].store(true, Ordering::Release);
+        self.slots_generation[empty].store(generation, Ordering::Release);
         self.slots[empty] = Some(Slot(
             DataPacket {
                 slot: empty as isize + 1,
@@ -137,10 +140,6 @@ impl<T: Serialize + Clone> Sender<T> {
             },
             Instant::now(),
         ));
-        // note the order, it is important as the receiver read generation first and set used at
-        // last.
-        self.slots_used[empty].store(true, Ordering::Release);
-        self.slots_generation[empty].store(generation, Ordering::Release);
         &self.slots[empty].as_ref().unwrap().0
     }
 
@@ -159,12 +158,8 @@ impl<T: Serialize + Clone> Sender<T> {
     async fn queue(&mut self, packet: PacketType<T>) -> Option<&DataPacket<T>> {
         match packet {
             PacketType::Reliable(data) => {
-                if let Some(empty) = self.find_empty_slot() {
-                    Some(self.put_in(data, empty))
-                } else {
-                    self.queue.push_back(data);
-                    None
-                }
+                self.queue.push_back(data);
+                None
             }
             PacketType::Unreliable(data) => {
                 let generation = self.generation;
@@ -186,26 +181,40 @@ impl<T: Serialize + Clone> Sender<T> {
         let receive = channel.into_future().fuse();
         pin_mut!(timeout, ack, receive);
         loop {
-            let result = select_biased! {
-                _ = timeout => {
-                    // setup timeout future
-                    if let Some(slot) = self.get_oldest() {
-                        let deadline = slot.1 + self.timeout;
-                        timeout.set(delay_until(deadline).fuse());
-                    }
-                    None
-                },
+            select_biased! {
+                _ = timeout => (),
                 _ = ack => {
                     ack.set(notify.notified().fuse());
-                    None
                 },
-                (item, stream) = receive => {
+                (mut item, stream) = receive => {
+                    loop {
+                        match item {
+                            Some(p) => if let Some(p) = self.queue(p).await {
+                                let p = p.clone();
+                                self.send(&p).await;
+                            },
+                            None => {
+                                return;
+                            }
+                        }
+                        if let Ok(p) = stream.try_next() {
+                            item = p;
+                        } else {
+                            break;
+                        }
+                    }
                     receive.set(stream.into_future().fuse());
-                    Some(item)
                 },
             };
             // FIXME: A lot of copying going on for this scheme
             // probably we can fix it by pinning
+
+            if timeout.is_terminated() {
+                if let Some(slot) = self.get_oldest() {
+                    let deadline = slot.1 + self.timeout;
+                    timeout.set(delay_until(deadline).fuse());
+                }
+            }
 
             // resend all timeout packets
             while let Some(p) = self.resend() {
@@ -220,17 +229,6 @@ impl<T: Serialize + Clone> Sender<T> {
                     self.send(&p).await;
                 } else {
                     break;
-                }
-            }
-            // process channel
-            if let Some(p) = result {
-                if p.is_none() {
-                    // terminate signal
-                    break;
-                }
-                if let Some(p) = self.queue(p.unwrap()).await {
-                    let p = p.clone();
-                    self.send(&p).await;
                 }
             }
         }
@@ -269,8 +267,10 @@ impl Receiver {
     pub async fn recv_loop<T: Serialize + DeserializeOwned>(
         &mut self,
         channel: &mut UnboundedSender<DataPacket<T>>,
+        drop_percentage: u64,
     ) {
-        const CAPACITY: usize = 2048;
+        // packet size for UDP is normally 1500 bytes
+        const CAPACITY: usize = 1024;
         let mut recv_buffer = Vec::with_capacity(CAPACITY);
         for _ in 0..CAPACITY {
             recv_buffer.push(0);
@@ -280,18 +280,24 @@ impl Receiver {
             if size.is_err() {
                 break;
             }
+            // simulate packet drop
+            if drop_percentage > 0 && rand::random::<u64>() % 100 < drop_percentage {
+                continue;
+            }
             let size = size.unwrap();
             let mut p = from_slice::<DataPacket<T>>(&recv_buffer[0..size]).unwrap();
             if p.slot > 0 {
                 assert!(p.slot <= self.slots_generation.len() as isize);
                 let current = self.recv_generation[p.slot as usize - 1];
-                if let Some(current) = current {
+                let new = if let Some(current) = current {
                     if Wrapping(p.generation) - Wrapping(current) <= Wrapping(0) {
-                        // not newer, discard it
-                        continue;
+                        false
+                    } else {
+                        true
                     }
-                }
-                self.recv_generation[p.slot as usize - 1] = Some(p.generation);
+                } else {
+                    true
+                };
                 // send ACK
                 p.slot = -p.slot;
                 // we are assuming this takes a very short time...
@@ -304,7 +310,10 @@ impl Receiver {
                     .await
                     .unwrap();
                 p.slot = -p.slot;
-                channel.unbounded_send(p).unwrap();
+                if new {
+                    self.recv_generation[p.slot as usize - 1] = Some(p.generation);
+                    channel.unbounded_send(p).unwrap();
+                }
             } else if p.slot == 0 {
                 // just receive it
                 channel.unbounded_send(p).unwrap();
@@ -334,6 +343,7 @@ async fn udp_loop<T: Serialize + DeserializeOwned + Clone + Send + Sync + 'stati
     socket: UdpSocket,
     timeout: Duration,
     slot_capacity: usize,
+    drop_percentage: u64,
     from_fg: UnboundedReceiver<PacketType<T>>,
     to_fg: UnboundedSender<DataPacket<T>>,
 ) {
@@ -346,7 +356,7 @@ async fn udp_loop<T: Serialize + DeserializeOwned + Clone + Send + Sync + 'stati
     });
     let recv_task = tokio::spawn(async move {
         let mut to_fg = to_fg;
-        receiver.recv_loop(&mut to_fg).await;
+        receiver.recv_loop(&mut to_fg, drop_percentage).await;
     });
     let _ = join!(send_task, recv_task);
 }
@@ -354,12 +364,13 @@ async fn udp_loop<T: Serialize + DeserializeOwned + Clone + Send + Sync + 'stati
 pub fn start_udp_loop<T: Serialize + DeserializeOwned + Clone + Send + Sync + 'static>(
     socket: UdpSocket,
     timeout: Duration,
-    slot_capacity: usize
+    slot_capacity: usize,
+    drop_percentage: u64
 ) -> (UnboundedSender<PacketType<T>>, UnboundedReceiver<DataPacket<T>>) {
     let (to_background, from_foreground) = unbounded();
     let (to_foreground, from_background) = unbounded();
     thread::spawn(move || {
-        udp_loop::<T>(socket, timeout, slot_capacity, from_foreground, to_foreground);
+        udp_loop::<T>(socket, timeout, slot_capacity, drop_percentage, from_foreground, to_foreground);
     });
     (to_background, from_background)
 }
