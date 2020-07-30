@@ -20,6 +20,7 @@ use amethyst::{
     utils::application_root_dir,
 };
 use crate::systems::MultiPongBundle;
+use std::time::Duration;
 
 fn main() -> amethyst::Result<()> {
     amethyst::start_logger(Default::default());
@@ -54,7 +55,7 @@ fn main() -> amethyst::Result<()> {
         Application::build(assets_dir, states::PlayerName::default())?
             .with_frame_limit(
                 FrameRateLimitStrategy::SleepAndYield(
-                    Duration::from_mills(2)
+                    Duration::from_millis(2),
                 ),
                 60,
             )
