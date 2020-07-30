@@ -1,15 +1,17 @@
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    future::{Fuse, FutureExt, Future},
-    pin_mut, select_biased,
+    future::{Fuse, FutureExt},
+    pin_mut, select_biased, join,
     stream::StreamExt,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::collections::VecDeque;
+use std::marker::{Send, Sync};
+use std::num::Wrapping;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
-use std::num::Wrapping;
+use std::thread;
 use tokio::{
     net::{
         udp::{RecvHalf, SendHalf},
@@ -25,13 +27,13 @@ pub enum PacketType<T> {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct DataPacket<T> {
+pub struct DataPacket<T> {
     // slot > 0: require ACK, stored in slots[slot - 1]
     // slot = 0: unreliable packet
     // slot < 0: is ACK, stored in slots[-slot - 1]
-    slot: isize,
-    generation: i64,
-    data: T,
+    pub slot: isize,
+    pub generation: i64,
+    pub data: T,
 }
 
 struct Slot<T>(DataPacket<T>, Instant);
@@ -168,7 +170,7 @@ impl<T: Serialize + Clone> Sender<T> {
                 let generation = self.generation;
                 self.generation += 1;
                 self.temp = Some(DataPacket {
-                    slot: -1,
+                    slot: 0,
                     generation,
                     data,
                 });
@@ -245,10 +247,7 @@ struct Receiver {
 }
 
 impl Receiver {
-    pub fn new<T2: Serialize + Clone>(
-        inner: RecvHalf,
-        sender: &Sender<T2>,
-    ) -> Self {
+    pub fn new<T2: Serialize + Clone>(inner: RecvHalf, sender: &Sender<T2>) -> Self {
         let send_half = sender.get_send_half();
         let slots_generation = sender.get_slots_generation();
         let slots_used = sender.get_slots_used();
@@ -267,7 +266,10 @@ impl Receiver {
         }
     }
 
-    pub async fn recv_loop<T: Serialize + DeserializeOwned>(&mut self, channel: &mut UnboundedSender<DataPacket<T>>) {
+    pub async fn recv_loop<T: Serialize + DeserializeOwned>(
+        &mut self,
+        channel: &mut UnboundedSender<DataPacket<T>>,
+    ) {
         const CAPACITY: usize = 2048;
         let mut recv_buffer = Vec::with_capacity(CAPACITY);
         for _ in 0..CAPACITY {
@@ -295,7 +297,12 @@ impl Receiver {
                 // we are assuming this takes a very short time...
                 // actually we can send a dummy message, but I don't want to change the type of
                 // DataPacket right now...
-                self.send_half.lock().await.send(&to_vec(&p).unwrap()).await.unwrap();
+                self.send_half
+                    .lock()
+                    .await
+                    .send(&to_vec(&p).unwrap())
+                    .await
+                    .unwrap();
                 p.slot = -p.slot;
                 channel.unbounded_send(p).unwrap();
             } else if p.slot == 0 {
@@ -305,8 +312,14 @@ impl Receiver {
                 // got ACK
                 p.slot = -p.slot;
                 assert!(p.slot <= self.slots_generation.len() as isize);
-                if self.slots_generation[p.slot as usize - 1].load(Ordering::Acquire) == p.generation {
-                    if self.slots_used[p.slot as usize - 1].compare_and_swap(true, false, Ordering::Release) {
+                if self.slots_generation[p.slot as usize - 1].load(Ordering::Acquire)
+                    == p.generation
+                {
+                    if self.slots_used[p.slot as usize - 1].compare_and_swap(
+                        true,
+                        false,
+                        Ordering::Release,
+                    ) {
                         // only notify when it is originally used
                         self.notify.notify();
                     }
@@ -315,3 +328,39 @@ impl Receiver {
         }
     }
 }
+
+#[tokio::main]
+async fn udp_loop<T: Serialize + DeserializeOwned + Clone + Send + Sync + 'static>(
+    socket: UdpSocket,
+    timeout: Duration,
+    slot_capacity: usize,
+    from_fg: UnboundedReceiver<PacketType<T>>,
+    to_fg: UnboundedSender<DataPacket<T>>,
+) {
+    let (recv, send) = socket.split();
+    let mut sender = Sender::new(send, timeout, slot_capacity);
+    let mut receiver = Receiver::new(recv, &sender);
+    let send_task = tokio::spawn(async move {
+        let mut from_fg = from_fg;
+        sender.send_loop(&mut from_fg).await;
+    });
+    let recv_task = tokio::spawn(async move {
+        let mut to_fg = to_fg;
+        receiver.recv_loop(&mut to_fg).await;
+    });
+    let _ = join!(send_task, recv_task);
+}
+
+pub fn start_udp_loop<T: Serialize + DeserializeOwned + Clone + Send + Sync + 'static>(
+    socket: UdpSocket,
+    timeout: Duration,
+    slot_capacity: usize
+) -> (UnboundedSender<PacketType<T>>, UnboundedReceiver<DataPacket<T>>) {
+    let (to_background, from_foreground) = unbounded();
+    let (to_foreground, from_background) = unbounded();
+    thread::spawn(move || {
+        udp_loop::<T>(socket, timeout, slot_capacity, from_foreground, to_foreground);
+    });
+    (to_background, from_background)
+}
+
