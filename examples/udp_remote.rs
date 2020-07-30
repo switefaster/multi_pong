@@ -19,21 +19,22 @@ enum Packet {
 }
 
 async fn server_listen(bind: &str) -> UdpSocket {
-    let mut buffer: Vec<u8> = Vec::with_capacity(MAGIC.len());
-    for _ in MAGIC.iter() {
+    const CAPACITY: usize = 2048;
+    let mut buffer: Vec<u8> = Vec::with_capacity(CAPACITY);
+    for _ in 0..CAPACITY {
         buffer.push(0);
     }
     let mut socket = UdpSocket::bind(bind).await.unwrap();
     loop {
         let (len, from) = socket.recv_from(buffer.as_mut_slice()).await.unwrap();
-        if len == MAGIC.len() && buffer == MAGIC {
+        if len == MAGIC.len() && &buffer[..MAGIC.len()] == MAGIC {
             socket.connect(from).await.unwrap();
             break;
         }
     }
     // send magic back to client to notify connection established,
     // and wait until the client send something different
-    while buffer == MAGIC {
+    while &buffer[..MAGIC.len()] == MAGIC {
         socket.send(MAGIC).await.unwrap();
         let _ = socket.recv(buffer.as_mut_slice()).await.unwrap();
     }
@@ -77,6 +78,7 @@ async fn main() {
         println!("Usage:");
         println!("Server: <bind address with port>");
         println!("Client: <bind address with port> <server address with port>");
+        println!("Note: The bind address should not be 127.0.0.1, better use 0.0.0.0");
         return;
     };
     println!("Connected!");
@@ -100,9 +102,9 @@ async fn main() {
                 }
                 Packet::Pong(reliable, id, timestamp) => {
                     println!(
-                        "ID: {}, time: {}µs, reliable: {}",
+                        "ID: {}, time: {}ms, reliable: {}",
                         id,
-                        start.elapsed().as_micros() - timestamp,
+                        (start.elapsed().as_micros() - timestamp)/1000,
                         reliable
                     );
                 }
@@ -115,23 +117,25 @@ async fn main() {
         let interval_future = delay_for(interval).fuse();
         pin_mut!(interval_future);
         loop {
-            let packet = select! {
+            select! {
                 p = ack_recv.next().fuse() => {
-                    p.unwrap()
+                    send.unbounded_send(p.unwrap()).unwrap();
                 },
                 _ = interval_future => {
                     interval_future.set(delay_for(interval).fuse());
-                    let reliable = id % 5 == 0;
-                    let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
-                    id += 1;
-                    if reliable {
-                        udp::PacketType::Reliable(packet)
-                    } else {
-                        udp::PacketType::Unreliable(packet)
+                    for _ in 0..5 {
+                        let reliable = id % 5 == 0;
+                        let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
+                        id += 1;
+                        let packet = if reliable {
+                            udp::PacketType::Reliable(packet)
+                        } else {
+                            udp::PacketType::Unreliable(packet)
+                        };
+                        send.unbounded_send(packet).unwrap();
                     }
                 }
-            };
-            send.unbounded_send(packet).unwrap();
+            }
         }
     });
     let _ = join!(send_task, recv_task);
