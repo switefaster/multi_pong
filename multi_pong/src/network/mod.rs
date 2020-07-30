@@ -14,8 +14,6 @@ use tokio_util::codec::{FramedWrite, LengthDelimitedCodec, FramedRead};
 use tokio_serde::formats::SymmetricalMessagePack;
 use async_std::sync::TrySendError;
 
-pub mod udp;
-
 pub enum Side {
     Server,
     Client,
