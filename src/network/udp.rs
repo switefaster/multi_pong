@@ -4,7 +4,6 @@ use futures::{
     pin_mut, select_biased, join,
     stream::StreamExt,
 };
-use rand::RngCore;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::collections::VecDeque;
