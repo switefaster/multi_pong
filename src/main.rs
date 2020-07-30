@@ -5,7 +5,10 @@ mod constants;
 mod states;
 
 use amethyst::{
-    core::TransformBundle,
+    core::{
+        TransformBundle,
+        frame_limiter::FrameRateLimitStrategy,
+    },
     input::{InputBundle, StringBindings},
     prelude::*,
     renderer::{
@@ -47,7 +50,15 @@ fn main() -> amethyst::Result<()> {
             .with_bundle(MultiPongBundle)?;
 
     let assets_dir = app_root.join("assets");
-    let mut game = Application::new(assets_dir, states::PlayerName::default(), game_data)?;
+    let mut game =
+        Application::build(assets_dir, states::PlayerName::default())?
+            .with_frame_limit(
+                FrameRateLimitStrategy::SleepAndYield(
+                    Duration::from_mills(2)
+                ),
+                60,
+            )
+            .build(game_data)?;
     game.run();
 
     Ok(())
