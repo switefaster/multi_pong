@@ -13,17 +13,19 @@ struct Point(u32, u128);
 
 #[tokio::main]
 async fn main() {
-    println!("UDP Example");
+    println!("UDP Local Example");
 
-    // 100ms
+    // 1ms timeout
     let timeout = Duration::new(0, 1_000_000);
 
-    let socket1 = UdpSocket::bind("0.0.0.0:4001").await.unwrap();
-    socket1.connect("0.0.0.0:4002").await.unwrap();
-    let socket2 = UdpSocket::bind("0.0.0.0:4002").await.unwrap();
-    socket2.connect("0.0.0.0:4001").await.unwrap();
-    let (send1, _) = udp::start_udp_loop::<Point>(socket1, timeout, 10, 20);
-    let (_, mut recv2) = udp::start_udp_loop::<Point>(socket2, timeout, 10, 20);
+    let socket1 = UdpSocket::bind("127.0.0.1:4001").await.unwrap();
+    socket1.connect("127.0.0.1:4002").await.unwrap();
+    let socket2 = UdpSocket::bind("127.0.0.1:4002").await.unwrap();
+    socket2.connect("127.0.0.1:4001").await.unwrap();
+
+    const DROP_RATE: u64 = 20;
+    let (send1, _) = udp::start_udp_loop::<Point>(socket1, timeout, 10, DROP_RATE);
+    let (_, mut recv2) = udp::start_udp_loop::<Point>(socket2, timeout, 10, DROP_RATE);
 
     let start = Instant::now();
 
@@ -36,7 +38,7 @@ async fn main() {
                 println!("Reliable packets: {}", reliable_packets);
             }
             println!(
-                "Delay for {} in {}: {}",
+                "Message with id {} in slot {} takes {} microseconds",
                 p.data.0,
                 p.slot,
                 start.elapsed().as_micros() - p.data.1
