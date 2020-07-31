@@ -1,9 +1,11 @@
 use futures::{channel::mpsc::unbounded, future::FutureExt, pin_mut, select};
-use serde::{Deserialize, Serialize};
+use rudp::{hand_shake::*, start_udp_loop, PacketDesc};
+use std::convert::TryInto;
 use std::env;
+use std::mem::size_of;
+use std::rc::Rc;
 use tokio::{
     join,
-    net::UdpSocket,
     stream::StreamExt,
     time::Duration,
     time::{delay_for, Instant},
@@ -11,57 +13,57 @@ use tokio::{
 
 const MAGIC: &[u8] = "MULTIPONG".as_bytes();
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum Packet {
     Ping(bool, u64, u128),
     Pong(bool, u64, u128),
 }
 
-async fn server_listen(bind: &str) -> UdpSocket {
-    const CAPACITY: usize = 2048;
-    let mut buffer: Vec<u8> = Vec::with_capacity(CAPACITY);
-    for _ in 0..CAPACITY {
-        buffer.push(0);
-    }
-    let mut socket = UdpSocket::bind(bind).await.unwrap();
-    loop {
-        let (len, from) = socket.recv_from(buffer.as_mut_slice()).await.unwrap();
-        if len == MAGIC.len() && &buffer[..MAGIC.len()] == MAGIC {
-            socket.connect(from).await.unwrap();
-            break;
+impl PacketDesc for Packet {
+    fn id(&self) -> u32 {
+        match *self {
+            Packet::Ping(_, _, _) => 0,
+            Packet::Pong(_, _, _) => 1,
         }
     }
-    // send magic back to client to notify connection established,
-    // and wait until the client send something different
-    while &buffer[..MAGIC.len()] == MAGIC {
-        socket.send(MAGIC).await.unwrap();
-        let _ = socket.recv(buffer.as_mut_slice()).await.unwrap();
-    }
-    socket
-}
 
-async fn client_connect(bind: &str, server: &str) -> UdpSocket {
-    let timeout = Duration::new(0, 100_000_000);
-    let mut buffer: Vec<u8> = Vec::with_capacity(MAGIC.len());
-    for _ in MAGIC.iter() {
-        buffer.push(0);
+    fn data(&self) -> Rc<Vec<u8>> {
+        let (a, b, c) = match *self {
+            Packet::Ping(a, b, c) => (a, b, c),
+            Packet::Pong(a, b, c) => (a, b, c),
+        };
+        let mut v: Vec<u8> = Vec::new();
+        v.push(a as u8);
+        v.extend(b.to_be_bytes().iter());
+        v.extend(c.to_be_bytes().iter());
+        Rc::new(v)
     }
-    let socket = UdpSocket::bind(bind).await.unwrap();
-    socket.connect(server).await.unwrap();
-    let (mut recv, mut send) = socket.split();
-    loop {
-        send.send(MAGIC).await.unwrap();
-        select! {
-            _ = recv.recv(buffer.as_mut_slice()).fuse() => {
-                if buffer == MAGIC {
-                    break;
-                }
-            },
-            _ = delay_for(timeout).fuse() => {
-            }
+
+    fn deserialize(id: u32, data: &[u8]) -> Self {
+        let a = data[0] == 1;
+        let b = u64::from_be_bytes(data[1..size_of::<u64>() + 1].try_into().unwrap());
+        let c = u128::from_be_bytes(
+            data[size_of::<u64>() + 1..size_of::<u128>() + size_of::<u64>() + 1]
+                .try_into()
+                .unwrap(),
+        );
+        match id {
+            0 => Packet::Ping(a, b, c),
+            1 => Packet::Pong(a, b, c),
+            _ => panic!("Invalid ID!")
         }
     }
-    send.reunite(recv).unwrap()
+
+    fn reliable(&self) -> bool {
+        match *self {
+            Packet::Ping(a, _, _) => a,
+            Packet::Pong(a, _, _) => a,
+        }
+    }
+
+    fn ordered(_: u32) -> bool {
+        false
+    }
 }
 
 #[tokio::main]
@@ -69,10 +71,10 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
     let socket = if args.len() == 2 {
         println!("Waiting for connection...");
-        server_listen(&args[1]).await
+        server_listen(&args[1], MAGIC).await
     } else if args.len() == 3 {
         println!("Connecting...");
-        client_connect(&args[1], &args[2]).await
+        client_connect(&args[1], &args[2], MAGIC).await
     } else {
         println!("Usage:");
         println!("Server: <bind address with port>");
@@ -83,29 +85,27 @@ async fn main() {
     println!("Connected!");
     // 20ms
     let timeout = Duration::new(0, 20_000_000);
-    let (send, mut recv) = rudp::start_udp_loop::<Packet>(socket, timeout, 10, 0);
+    let (send, mut recv) = start_udp_loop::<Packet>(socket, timeout, 10, 0);
     let start = Instant::now();
-    let (ack_send, mut ack_recv) = unbounded::<rudp::PacketType<Packet>>();
+    let (ack_send, mut ack_recv) = unbounded::<Packet>();
     let recv_task = tokio::spawn(async move {
         loop {
-            let p = recv.next().await.unwrap();
-            match p.data {
-                Packet::Ping(reliable, id, timestamp) => {
+            let p = recv.next().await;
+            match p {
+                Some(Packet::Ping(reliable, id, timestamp)) => {
                     let packet = Packet::Pong(reliable, id, timestamp);
-                    let packet = if reliable {
-                        rudp::PacketType::Reliable(packet)
-                    } else {
-                        rudp::PacketType::Unreliable(packet)
-                    };
                     ack_send.unbounded_send(packet).unwrap();
                 }
-                Packet::Pong(reliable, id, timestamp) => {
+                Some(Packet::Pong(reliable, id, timestamp)) => {
                     println!(
                         "ID: {}, time: {}ms, reliable: {}",
                         id,
-                        (start.elapsed().as_micros() - timestamp)/1000,
+                        (start.elapsed().as_micros() - timestamp) / 1000,
                         reliable
                     );
+                },
+                None => {
+                    return;
                 }
             }
         }
@@ -118,7 +118,9 @@ async fn main() {
         loop {
             select! {
                 p = ack_recv.next().fuse() => {
-                    send.unbounded_send(p.unwrap()).unwrap();
+                    if send.unbounded_send(p.unwrap()).is_err() {
+                        return;
+                    }
                 },
                 _ = interval_future => {
                     interval_future.set(delay_for(interval).fuse());
@@ -126,12 +128,9 @@ async fn main() {
                         let reliable = id % 5 == 0;
                         let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
                         id += 1;
-                        let packet = if reliable {
-                            rudp::PacketType::Reliable(packet)
-                        } else {
-                            rudp::PacketType::Unreliable(packet)
-                        };
-                        send.unbounded_send(packet).unwrap();
+                        if send.unbounded_send(packet).is_err() {
+                            return;
+                        }
                     }
                 }
             }
@@ -139,4 +138,3 @@ async fn main() {
     });
     let _ = join!(send_task, recv_task);
 }
-
