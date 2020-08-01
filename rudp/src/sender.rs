@@ -1,4 +1,4 @@
-use super::protocol::{modify_header, PacketDesc, PacketHeader};
+use super::protocol::{modify_slot, PacketDesc, PacketHeader};
 use futures::{
     channel::mpsc::UnboundedReceiver,
     future::{Fuse, FusedFuture, FutureExt},
@@ -14,9 +14,10 @@ use std::{
 };
 use tokio::{
     net::udp::SendHalf,
-    sync::{Mutex, Notify},
+    sync::Notify,
     time::{delay_until, Delay, Duration, Instant},
 };
+use async_std::sync::Mutex;
 
 pub struct Sender {
     retry_count: u32,
@@ -28,6 +29,7 @@ pub struct Sender {
     slots_used: Arc<Vec<AtomicBool>>,
     notify: Arc<Notify>,
     queue: VecDeque<Vec<u8>>,
+    used_queue: VecDeque<usize>,
 }
 
 struct Slot(Vec<u8>, Instant);
@@ -54,6 +56,7 @@ impl Sender {
             slots_used,
             notify,
             queue: VecDeque::new(),
+            used_queue: VecDeque::new()
         }
     }
 
@@ -75,14 +78,13 @@ impl Sender {
 
     fn get_oldest<'a>(&mut self, slots: &'a mut [Option<Slot>]) -> Option<&'a mut Slot> {
         let mut oldest: Option<&mut Slot> = None;
-        for (slot, used) in slots.iter_mut().zip(self.slots_used.iter()) {
-            let used = used.load(Ordering::Acquire);
+        while let Some(&i) = self.used_queue.front() {
+            let used = self.slots_used[i].load(Ordering::Acquire);
             if used {
-                // we are sure that if the slot is used, it must be Some(Slot<T>)
-                let time = slot.as_ref().unwrap().1;
-                if oldest.is_none() || time < oldest.as_ref().unwrap().1 {
-                    oldest = slot.as_mut();
-                }
+                oldest = Some(slots[i].as_mut().unwrap());
+                break;
+            } else {
+                self.used_queue.pop_front();
             }
         }
         oldest
@@ -121,7 +123,8 @@ impl Sender {
         self.generation += 1;
         self.slots_used[empty].store(true, Ordering::Release);
         self.slots_generation[empty].store(generation, Ordering::Release);
-        modify_header(&mut data, empty as isize + 1, generation);
+        self.used_queue.push_back(empty);
+        modify_slot(&mut data, empty as isize + 1, generation);
         slots[empty] = Some(Slot(data, Instant::now()));
         &slots[empty].as_ref().unwrap().0
     }
@@ -131,6 +134,8 @@ impl Sender {
         let oldest = self.get_oldest(slots);
         match oldest {
             Some(mut oldest) if oldest.1.elapsed() > timeout => {
+                let index = self.used_queue.pop_front().unwrap();
+                self.used_queue.push_back(index);
                 oldest.1 = Instant::now();
                 Some(&oldest.0)
             }

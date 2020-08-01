@@ -80,7 +80,13 @@ impl PacketHeader {
     }
 }
 
-pub fn modify_header(data: &mut [u8], slot: isize, generation: i64) {
+pub fn modify_header(data: &mut [u8], id: u32, slot: isize, generation: i64) {
+    data[..SLOT_START].copy_from_slice(&id.to_be_bytes());
+    data[SLOT_START..GENERATION_START].copy_from_slice(&slot.to_be_bytes());
+    data[GENERATION_START..GENERATION_END].copy_from_slice(&generation.to_be_bytes());
+}
+
+pub fn modify_slot(data: &mut [u8], slot: isize, generation: i64) {
     data[SLOT_START..GENERATION_START].copy_from_slice(&slot.to_be_bytes());
     data[GENERATION_START..GENERATION_END].copy_from_slice(&generation.to_be_bytes());
 }

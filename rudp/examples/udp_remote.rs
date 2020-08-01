@@ -105,9 +105,9 @@ async fn main() {
                 }
                 Some(Packet::Pong(reliable, id, timestamp)) => {
                     println!(
-                        "ID: {}, time: {}ms, reliable: {}",
+                        "ID: {}, time: {}µs, reliable: {}",
                         id,
-                        (start.elapsed().as_micros() - timestamp) / 1000,
+                        (start.elapsed().as_micros() - timestamp),
                         reliable
                     );
                 }
@@ -119,8 +119,8 @@ async fn main() {
     });
     let send_task = tokio::spawn(async move {
         let mut id = 0;
-        let interval = Duration::new(0, 500_000_000);
-        loop {
+        let interval = Duration::new(0, 5_000_000);
+        for _ in 0..1000 {
             delay_for(interval).await;
             for _ in 0..5 {
                 let reliable = id % 5 == 0;
