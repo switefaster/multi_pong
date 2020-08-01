@@ -69,6 +69,11 @@ impl PacketDesc for Packet {
 
 #[tokio::main]
 async fn main() {
+    let env = env_logger::Env::default()
+        .filter_or("MY_LOG_LEVEL", "WARN")
+        .write_style_or("MY_LOG_STYLE", "always");
+    env_logger::init_from_env(env);
+
     let args: Vec<String> = env::args().collect();
     let socket = if args.len() == 2 {
         println!("Waiting for connection...");
