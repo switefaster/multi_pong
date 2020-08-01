@@ -110,8 +110,8 @@ async fn main() {
                     mean = (count * mean + time as f64) / (count + 1.0);
                     count += 1.0;
                     println!(
-                        "mean: {}, ID: {}, time: {}µs, reliable: {}",
-                        mean,
+                        "mean: {:>8}, ID: {:>4}, time: {:>8}µs, reliable: {}",
+                        mean.round(),
                         id,
                         time,
                         reliable
@@ -125,8 +125,8 @@ async fn main() {
     });
     let send_task = tokio::spawn(async move {
         let mut id = 0;
-        let interval = Duration::new(0, 5_000_000);
-        for _ in 0..1000 {
+        let interval = Duration::new(0, 50_000_000);
+        loop {
             delay_for(interval).await;
             for _ in 0..5 {
                 let reliable = id % 5 == 0;
