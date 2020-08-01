@@ -19,6 +19,8 @@ use tokio::{
 };
 
 pub struct Sender {
+    retry_count: u32,
+    retry_max: u32,
     generation: i64,
     timeout: Duration,
     inner: Arc<Mutex<SendHalf>>,
@@ -31,7 +33,7 @@ pub struct Sender {
 struct Slot(Vec<u8>, Instant);
 
 impl Sender {
-    pub fn new(inner: SendHalf, timeout: Duration, capacity: usize) -> Self {
+    pub fn new(inner: SendHalf, timeout: Duration, capacity: usize, retry_max: u32) -> Self {
         let inner = Arc::new(Mutex::new(inner));
         let mut slots_generation = Vec::with_capacity(capacity);
         let mut slots_used = Vec::with_capacity(capacity);
@@ -43,6 +45,8 @@ impl Sender {
         let slots_used = Arc::new(slots_used);
         let notify = Arc::new(Notify::new());
         Sender {
+            retry_count: 0,
+            retry_max,
             generation: 0,
             timeout,
             inner,
@@ -96,8 +100,15 @@ impl Sender {
         empty
     }
 
-    async fn send(&self, buffer: &[u8]) -> bool {
-        self.inner.lock().await.send(&buffer).await.is_ok()
+    /// Attempt to send the buffer once, return if send continuously failed. (reaches the max retry)
+    async fn send(&mut self, buffer: &[u8]) -> bool {
+        if self.inner.lock().await.send(&buffer).await.is_ok() {
+            self.retry_count = 0;
+            true
+        } else {
+            self.retry_count += 1;
+            self.retry_count != self.retry_max
+        }
     }
 
     fn put_in<'a>(

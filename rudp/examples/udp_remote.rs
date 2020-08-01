@@ -86,7 +86,7 @@ async fn main() {
     println!("Connected!");
     // 20ms
     let timeout = Duration::new(0, 20_000_000);
-    let (send, mut recv) = start_udp_loop::<Packet>(socket, timeout, 10, 0);
+    let (send, mut recv) = start_udp_loop::<Packet>(socket, timeout, 10, 10, 0);
     let send = Arc::new(send);
     let send_from_recv = send.clone();
     let start = Instant::now();
