@@ -95,6 +95,8 @@ async fn main() {
     let send = Arc::new(send);
     let send_from_recv = send.clone();
     let start = Instant::now();
+    let mut count = 0.0;
+    let mut mean = 0.0;
     let recv_task = tokio::spawn(async move {
         loop {
             let p = recv.next().await;
@@ -104,10 +106,14 @@ async fn main() {
                     send_from_recv.unbounded_send(packet).unwrap();
                 }
                 Some(Packet::Pong(reliable, id, timestamp)) => {
+                    let time = start.elapsed().as_micros() - timestamp;
+                    mean = (count * mean + time as f64) / (count + 1.0);
+                    count += 1.0;
                     println!(
-                        "ID: {}, time: {}µs, reliable: {}",
+                        "mean: {}, ID: {}, time: {}µs, reliable: {}",
+                        mean,
                         id,
-                        (start.elapsed().as_micros() - timestamp),
+                        time,
                         reliable
                     );
                 }
