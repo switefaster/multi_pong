@@ -2,7 +2,6 @@ use super::{
     protocol::{modify_header, PacketDesc, PacketHeader},
     sender::Sender,
 };
-use async_std::sync::Mutex;
 use futures::{
     channel::mpsc::{UnboundedReceiver, UnboundedSender},
     stream::StreamExt,
@@ -18,7 +17,7 @@ use std::{
 };
 use tokio::{
     net::udp::{RecvHalf, SendHalf},
-    sync::Notify,
+    sync::{Notify, Mutex},
 };
 
 pub struct Receiver {

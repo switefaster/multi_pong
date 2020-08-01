@@ -14,10 +14,9 @@ use std::{
 };
 use tokio::{
     net::udp::SendHalf,
-    sync::Notify,
+    sync::{Notify, Mutex},
     time::{delay_until, Delay, Duration, Instant},
 };
-use async_std::sync::Mutex;
 
 pub struct Sender {
     retry_count: u32,

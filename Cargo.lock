@@ -3470,7 +3470,6 @@ dependencies = [
 name = "rudp"
 version = "0.1.0"
 dependencies = [
- "async-std",
  "env_logger",
  "futures",
  "log",
