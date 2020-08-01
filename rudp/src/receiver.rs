@@ -149,24 +149,36 @@ impl Receiver {
     pub async fn recv_loop<T: PacketDesc>(
         &mut self,
         channel: &mut UnboundedSender<T>,
+        retry_max: u32,
         drop_percentage: u64,
     ) {
         // packet size for UDP is normally 1500 bytes
         const CAPACITY: usize = 1024;
+        let mut retry_count = 0;
         let mut recv_buffer = Vec::with_capacity(CAPACITY);
         for _ in 0..CAPACITY {
             recv_buffer.push(0);
         }
         loop {
             let size = self.inner.recv(recv_buffer.as_mut_slice()).await;
-            if size.is_err() {
-                return;
-            }
+            let size = match size {
+                Ok(size) => {
+                    retry_count = 0;
+                    size
+                },
+                Err(e) => {
+                    warn!("Error receiving data: {}", e.to_string());
+                    retry_count += 1;
+                    if retry_count == retry_max {
+                        return;
+                    }
+                    continue;
+                }
+            };
             // simulate packet drop
             if drop_percentage > 0 && rand::random::<u64>() % 100 < drop_percentage {
                 continue;
             }
-            let size = size.unwrap();
             let result = PacketHeader::deserialize(&recv_buffer[0..size]);
             let (p, data) = match result {
                 Ok((p, data)) => (p, data),

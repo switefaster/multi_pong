@@ -30,7 +30,7 @@ async fn udp_loop<T: PacketDesc + Send + Sync + 'static>(
     });
     let recv_task = tokio::spawn(async move {
         let mut to_fg = to_fg;
-        receiver.recv_loop(&mut to_fg, drop_percentage).await;
+        receiver.recv_loop(&mut to_fg, max_retry, drop_percentage).await;
     });
     // Close the task when any finishes.
     select!(
@@ -44,8 +44,8 @@ async fn udp_loop<T: PacketDesc + Send + Sync + 'static>(
 /// * socket: Socket for communication, should be connected already.
 /// * timeout: Timeout for retransmission.
 /// * slot_capacity: Number of slots for sending reliable packets *in parallel*.
-/// * max_retry: Maximum number of consecutive send attempts when the socket is unable to send messages.
-///   If reached, the send task would exit. Note that this is not resend attempt.
+/// * max_retry: Maximum number of consecutive recv attempts when the socket failed to receive messages.
+///   If reached, the receive task would exit. Note that this is not resend attempt.
 /// * drop_percentage: Packet drop rate for simulating packet drop. If 0, it would not attemp to
 ///   simulate packet drop. Should be within 0..100. Note that the probability is not really that
 ///   accurate, this is for testing only.
