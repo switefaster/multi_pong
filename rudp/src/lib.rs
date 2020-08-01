@@ -4,7 +4,7 @@ mod receiver;
 mod sender;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-pub use protocol::PacketDesc;
+pub use protocol::{PacketDesc, DeserializeError};
 use receiver::Receiver;
 use sender::Sender;
 use std::marker::{Send, Sync};

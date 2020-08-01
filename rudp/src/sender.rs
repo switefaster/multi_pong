@@ -1,3 +1,4 @@
+use super::protocol::{modify_header, PacketDesc, PacketHeader};
 use futures::{
     channel::mpsc::UnboundedReceiver,
     future::{Fuse, FusedFuture, FutureExt},
@@ -16,7 +17,6 @@ use tokio::{
     sync::{Mutex, Notify},
     time::{delay_until, Delay, Duration, Instant},
 };
-use super::protocol::{PacketDesc, Packet, modify_header};
 
 pub struct Sender {
     generation: i64,
@@ -96,7 +96,7 @@ impl Sender {
         empty
     }
 
-    async fn send(&mut self, buffer: &[u8]) -> bool{
+    async fn send(&self, buffer: &[u8]) -> bool {
         self.inner.lock().await.send(&buffer).await.is_ok()
     }
 
@@ -131,13 +131,16 @@ impl Sender {
         if data.reliable() {
             // slot and generation are just dummy value, would be set to the actual value when we
             // call `put_in`
-            self.queue
-                .push_back(Packet::new(&data.data(), data.id(), 0, 0).serialize());
+            let mut payload = PacketHeader::new(data.id(), 0, 0).serialize();
+            data.serialize(&mut payload);
+            self.queue.push_back(payload);
             None
         } else {
             let generation = self.generation;
             self.generation += 1;
-            Some(Packet::new(&data.data(), data.id(), 0, generation).serialize())
+            let mut payload = PacketHeader::new(data.id(), 0, generation).serialize();
+            data.serialize(&mut payload);
+            Some(payload)
         }
     }
 
