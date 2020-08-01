@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "multi_pong",
-    "rudp"
+    "rudp",
+    "rudp_derive"
 ]
 
 [profile.release]
