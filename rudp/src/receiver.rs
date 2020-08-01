@@ -162,9 +162,17 @@ impl Receiver {
         loop {
             let size = self.inner.recv(recv_buffer.as_mut_slice()).await;
             let size = match size {
-                Ok(size) => {
+                Ok(size) if size > 0 => {
                     retry_count = 0;
                     size
+                },
+                Ok(_) => {
+                    warn!("Error receiving data: Payload with length 0.");
+                    retry_count += 1;
+                    if retry_count == retry_max {
+                        return;
+                    }
+                    continue;
                 },
                 Err(e) => {
                     warn!("Error receiving data: {}", e.to_string());
