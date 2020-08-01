@@ -3,3 +3,7 @@ members = [
     "multi_pong",
     "rudp"
 ]
+
+[profile.release]
+debug = true
+lto = "fat"

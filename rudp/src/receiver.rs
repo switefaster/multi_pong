@@ -1,8 +1,12 @@
 use super::{
-    protocol::{PacketDesc, PacketHeader},
+    protocol::{modify_header, PacketDesc, PacketHeader},
     sender::Sender,
 };
-use futures::channel::mpsc::UnboundedSender;
+use async_std::sync::Mutex;
+use futures::{
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
+    stream::StreamExt,
+};
 use log::warn;
 use std::{
     collections::HashMap,
@@ -14,12 +18,11 @@ use std::{
 };
 use tokio::{
     net::udp::{RecvHalf, SendHalf},
-    sync::{Mutex, Notify},
+    sync::Notify,
 };
 
 pub struct Receiver {
     inner: RecvHalf,
-    send_half: Arc<Mutex<SendHalf>>,
     slots_generation: Arc<Vec<AtomicI64>>,
     recv_generation: Vec<Option<i64>>,
     slots_used: Arc<Vec<AtomicBool>>,
@@ -41,7 +44,6 @@ fn is_new(old: Option<&i64>, current: i64) -> bool {
 
 impl Receiver {
     pub fn new(inner: RecvHalf, sender: &Sender) -> Self {
-        let send_half = sender.get_send_half();
         let slots_generation = sender.get_slots_generation();
         let slots_used = sender.get_slots_used();
         let notify = sender.get_notify();
@@ -51,7 +53,6 @@ impl Receiver {
         }
         Receiver {
             inner,
-            send_half,
             recv_generation,
             slots_generation,
             slots_used,
@@ -63,7 +64,7 @@ impl Receiver {
     /// Handle reliable packet, return true if normal, false if channel closed.
     async fn handle_reliable<T: PacketDesc>(
         &mut self,
-        channel: &mut UnboundedSender<T>,
+        channel: &UnboundedSender<T>,
         p: &PacketHeader,
         data: &[u8],
     ) -> bool {
@@ -75,19 +76,6 @@ impl Receiver {
             self.recv_generation[p.slot as usize - 1].as_ref(),
             p.generation,
         );
-        // we are assuming this takes a very short time...
-        // actually we can send a dummy message, but I don't want to change the type of
-        // DataPacket right now...
-        if self
-            .send_half
-            .lock()
-            .await
-            .send(&PacketHeader::new(p.id, -p.slot, p.generation).serialize())
-            .await
-            .is_err()
-        {
-            warn!("Error sending ACK for reliable packet");
-        }
         if new {
             let packet = T::deserialize(p.id, data);
             match packet {
@@ -107,7 +95,7 @@ impl Receiver {
 
     fn handle_unreliable<T: PacketDesc>(
         &mut self,
-        channel: &mut UnboundedSender<T>,
+        channel: &UnboundedSender<T>,
         p: &PacketHeader,
         data: &[u8],
     ) -> bool {
@@ -148,7 +136,8 @@ impl Receiver {
 
     pub async fn recv_loop<T: PacketDesc>(
         &mut self,
-        channel: &mut UnboundedSender<T>,
+        ack_channel: &UnboundedSender<(u32, isize, i64)>,
+        channel: &UnboundedSender<T>,
         retry_max: u32,
         drop_percentage: u64,
     ) {
@@ -165,7 +154,7 @@ impl Receiver {
                 Ok(size) if size > 0 => {
                     retry_count = 0;
                     size
-                },
+                }
                 Ok(_) => {
                     warn!("Error receiving data: Payload with length 0.");
                     retry_count += 1;
@@ -173,7 +162,7 @@ impl Receiver {
                         return;
                     }
                     continue;
-                },
+                }
                 Err(e) => {
                     warn!("Error receiving data: {}", e.to_string());
                     retry_count += 1;
@@ -197,6 +186,9 @@ impl Receiver {
             };
             let ok = if p.slot > 0 {
                 self.handle_reliable(channel, &p, &data).await
+                    && ack_channel
+                        .unbounded_send((p.id, -p.slot, p.generation))
+                        .is_ok()
             } else if p.slot == 0 {
                 self.handle_unreliable(channel, &p, &data)
             } else {
@@ -205,6 +197,30 @@ impl Receiver {
             };
             if !ok {
                 return;
+            }
+        }
+    }
+}
+
+pub async fn ack_loop(
+    send_half: Arc<Mutex<SendHalf>>,
+    ack_channel: &mut UnboundedReceiver<(u32, isize, i64)>,
+) {
+    let mut payload = PacketHeader::new(0, 0, 0).serialize();
+    while let Some(mut p) = ack_channel.next().await {
+        let mut send = send_half.lock().await;
+        loop {
+            modify_header(&mut payload, p.0, p.1, p.2);
+            if let Err(e) = send.send(&payload).await {
+                warn!("Error sending ACK: {}", e.to_string());
+            }
+            if let Ok(next) = ack_channel.try_next() {
+                if next.is_none() {
+                    return;
+                }
+                p = next.unwrap();
+            } else {
+                break;
             }
         }
     }
