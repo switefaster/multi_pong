@@ -26,12 +26,6 @@ pub struct Receiver {
     unreliable_generations: HashMap<u32, i64>,
 }
 
-pub enum BypassResult<T> {
-    ToSender(T),
-    ToUser(T),
-    Discard,
-}
-
 fn is_new(old: Option<&i64>, current: i64) -> bool {
     if let Some(&old) = old {
         if Wrapping(current) - Wrapping(old) > Wrapping(0) {
@@ -68,8 +62,9 @@ impl Receiver {
     /// Handle reliable packet, return true if normal, false if channel closed.
     async fn handle_reliable<'a, T: PacketDesc>(
         &mut self,
+        channel: &mut UnboundedSender<T>,
         p: &Packet<'a>,
-    ) -> Option<T> {
+    ) -> bool {
         assert!(p.slot <= self.slots_generation.len() as isize);
         let new = is_new(
             self.recv_generation[p.slot as usize - 1].as_ref(),
@@ -86,27 +81,28 @@ impl Receiver {
             .unwrap();
         if new {
             self.recv_generation[p.slot as usize - 1] = Some(p.generation);
-            Some(T::deserialize(p.id, p.data))
+            channel.unbounded_send(T::deserialize(p.id, p.data)).is_ok()
         } else {
-            None
+            true
         }
     }
 
     fn handle_unreliable<'a, T: PacketDesc>(
         &mut self,
+        channel: &mut UnboundedSender<T>,
         p: &Packet<'a>,
-    ) -> Option<T> {
+    ) -> bool {
         if T::ordered(p.id) {
             let old = self.unreliable_generations.get(&p.id);
             if is_new(old, p.generation) {
                 self.unreliable_generations.insert(p.id, p.generation);
             } else {
                 // discard it
-                return None;
+                return true;
             }
         }
         // just receive it
-        Some(T::deserialize(p.id, p.data))
+        channel.unbounded_send(T::deserialize(p.id, p.data)).is_ok()
     }
 
     fn handle_ack<'a>(&mut self, p: &Packet<'a>) {
@@ -121,11 +117,9 @@ impl Receiver {
         }
     }
 
-    pub async fn recv_loop<T: PacketDesc, F: Fn(T) -> BypassResult<T>>(
+    pub async fn recv_loop<T: PacketDesc>(
         &mut self,
-        channel: &UnboundedSender<T>,
-        to_sender: &UnboundedSender<T>,
-        bypass: F,
+        channel: &mut UnboundedSender<T>,
         drop_percentage: u64,
     ) {
         // packet size for UDP is normally 1500 bytes
@@ -145,22 +139,16 @@ impl Receiver {
             }
             let size = size.unwrap();
             let p = Packet::deserialize(&recv_buffer[0..size]);
-            let p = if p.slot > 0 {
-                self.handle_reliable(&p).await
+            let ok = if p.slot > 0 {
+                self.handle_reliable(channel, &p).await
             } else if p.slot == 0 {
-                self.handle_unreliable(&p)
+                self.handle_unreliable(channel, &p)
             } else {
                 self.handle_ack(&p);
-                None
+                true
             };
-            if let Some(p) = p {
-                if match bypass(p) {
-                    BypassResult::ToSender(p) => to_sender.unbounded_send(p).is_err(),
-                    BypassResult::ToUser(p) => channel.unbounded_send(p).is_err(),
-                    BypassResult::Discard => false
-                } {
-                    break;
-                }
+            if !ok {
+                return;
             }
         }
     }
