@@ -100,7 +100,7 @@ impl Sender {
         empty
     }
 
-    /// Attempt to send the buffer once, return if send continuously failed. (reaches the max retry)
+    /// Attempt to send the buffer once, return false if send continuously failed. (reaches the max retry)
     async fn send(&mut self, buffer: &[u8]) -> bool {
         if self.inner.lock().await.send(&buffer).await.is_ok() {
             self.retry_count = 0;
