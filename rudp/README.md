@@ -8,6 +8,16 @@ Roughly UDP, a UDP wrapper layer with optional reliable ordered (but not
 sequenced) message transmission. Still WIP. Planned to be used by `multi_pong`
 to reduce network latency due to TCP.
 
+## Example
+There is a `udp_remote` example in the examples directory.
+```
+# Setup a server listening on "0.0.0.0:4001"
+cargo run --release --example udp_remote "0.0.0.0:4001"
+
+# Setup a client listening on "0.0.0.0:4002" and connect to "0.0.0.0:4001"
+cargo run --release --example udp_remote "0.0.0.0:4002" "0.0.0.0:4001"
+```
+
 ## Features
 * Handle network handshake between server and client, via magic byte string.
 * Provide unreliable packet transmission, with optional order requirement.

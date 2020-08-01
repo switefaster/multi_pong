@@ -1,3 +1,4 @@
+use super::protocol::{modify_header, PacketDesc, PacketHeader};
 use futures::{
     channel::mpsc::UnboundedReceiver,
     future::{Fuse, FusedFuture, FutureExt},
@@ -16,9 +17,10 @@ use tokio::{
     sync::{Mutex, Notify},
     time::{delay_until, Delay, Duration, Instant},
 };
-use super::protocol::{PacketDesc, Packet, modify_header};
 
 pub struct Sender {
+    retry_count: u32,
+    retry_max: u32,
     generation: i64,
     timeout: Duration,
     inner: Arc<Mutex<SendHalf>>,
@@ -31,7 +33,7 @@ pub struct Sender {
 struct Slot(Vec<u8>, Instant);
 
 impl Sender {
-    pub fn new(inner: SendHalf, timeout: Duration, capacity: usize) -> Self {
+    pub fn new(inner: SendHalf, timeout: Duration, capacity: usize, retry_max: u32) -> Self {
         let inner = Arc::new(Mutex::new(inner));
         let mut slots_generation = Vec::with_capacity(capacity);
         let mut slots_used = Vec::with_capacity(capacity);
@@ -43,6 +45,8 @@ impl Sender {
         let slots_used = Arc::new(slots_used);
         let notify = Arc::new(Notify::new());
         Sender {
+            retry_count: 0,
+            retry_max,
             generation: 0,
             timeout,
             inner,
@@ -96,8 +100,15 @@ impl Sender {
         empty
     }
 
-    async fn send(&mut self, buffer: &[u8]) -> bool{
-        self.inner.lock().await.send(&buffer).await.is_ok()
+    /// Attempt to send the buffer once, return false if send continuously failed. (reaches the max retry)
+    async fn send(&mut self, buffer: &[u8]) -> bool {
+        if self.inner.lock().await.send(&buffer).await.is_ok() {
+            self.retry_count = 0;
+            true
+        } else {
+            self.retry_count += 1;
+            self.retry_count != self.retry_max
+        }
     }
 
     fn put_in<'a>(
@@ -131,13 +142,16 @@ impl Sender {
         if data.reliable() {
             // slot and generation are just dummy value, would be set to the actual value when we
             // call `put_in`
-            self.queue
-                .push_back(Packet::new(&data.data(), data.id(), 0, 0).serialize());
+            let mut payload = PacketHeader::new(data.id(), 0, 0).serialize();
+            data.serialize(&mut payload);
+            self.queue.push_back(payload);
             None
         } else {
             let generation = self.generation;
             self.generation += 1;
-            Some(Packet::new(&data.data(), data.id(), 0, generation).serialize())
+            let mut payload = PacketHeader::new(data.id(), 0, generation).serialize();
+            data.serialize(&mut payload);
+            Some(payload)
         }
     }
 
