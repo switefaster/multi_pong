@@ -1,9 +1,8 @@
-use futures::{channel::mpsc::unbounded, future::FutureExt, pin_mut, select};
-use rudp::{hand_shake::*, start_udp_loop, PacketDesc};
+use rudp::{hand_shake::*, start_udp_loop, DeserializeError, PacketDesc};
 use std::convert::TryInto;
 use std::env;
 use std::mem::size_of;
-use std::rc::Rc;
+use std::sync::Arc;
 use tokio::{
     join,
     stream::StreamExt,
@@ -27,30 +26,32 @@ impl PacketDesc for Packet {
         }
     }
 
-    fn data(&self) -> Rc<Vec<u8>> {
+    fn serialize(&self, writer: &mut Vec<u8>) {
         let (a, b, c) = match *self {
             Packet::Ping(a, b, c) => (a, b, c),
             Packet::Pong(a, b, c) => (a, b, c),
         };
-        let mut v: Vec<u8> = Vec::new();
-        v.push(a as u8);
-        v.extend(b.to_be_bytes().iter());
-        v.extend(c.to_be_bytes().iter());
-        Rc::new(v)
+        writer.push(a as u8);
+        writer.extend(b.to_be_bytes().iter());
+        writer.extend(c.to_be_bytes().iter());
     }
 
-    fn deserialize(id: u32, data: &[u8]) -> Self {
+    fn deserialize(id: u32, data: &[u8]) -> Result<Self, DeserializeError> {
         let a = data[0] == 1;
-        let b = u64::from_be_bytes(data[1..size_of::<u64>() + 1].try_into().unwrap());
+        let b = u64::from_be_bytes(data[1..size_of::<u64>() + 1].try_into().map_err(|_| {
+            DeserializeError("Error deserializing message index (Packet.1)".to_string())
+        })?);
         let c = u128::from_be_bytes(
             data[size_of::<u64>() + 1..size_of::<u128>() + size_of::<u64>() + 1]
                 .try_into()
-                .unwrap(),
+                .map_err(|_| {
+                    DeserializeError("Error deserializing timestamp (Packet.2)".to_string())
+                })?,
         );
         match id {
-            0 => Packet::Ping(a, b, c),
-            1 => Packet::Pong(a, b, c),
-            _ => panic!("Invalid ID!")
+            0 => Ok(Packet::Ping(a, b, c)),
+            1 => Ok(Packet::Pong(a, b, c)),
+            _ => Err(DeserializeError("Invalid ID!".to_string())),
         }
     }
 
@@ -86,15 +87,16 @@ async fn main() {
     // 20ms
     let timeout = Duration::new(0, 20_000_000);
     let (send, mut recv) = start_udp_loop::<Packet>(socket, timeout, 10, 0);
+    let send = Arc::new(send);
+    let send_from_recv = send.clone();
     let start = Instant::now();
-    let (ack_send, mut ack_recv) = unbounded::<Packet>();
     let recv_task = tokio::spawn(async move {
         loop {
             let p = recv.next().await;
             match p {
                 Some(Packet::Ping(reliable, id, timestamp)) => {
                     let packet = Packet::Pong(reliable, id, timestamp);
-                    ack_send.unbounded_send(packet).unwrap();
+                    send_from_recv.unbounded_send(packet).unwrap();
                 }
                 Some(Packet::Pong(reliable, id, timestamp)) => {
                     println!(
@@ -103,7 +105,7 @@ async fn main() {
                         (start.elapsed().as_micros() - timestamp) / 1000,
                         reliable
                     );
-                },
+                }
                 None => {
                     return;
                 }
@@ -113,25 +115,14 @@ async fn main() {
     let send_task = tokio::spawn(async move {
         let mut id = 0;
         let interval = Duration::new(0, 500_000_000);
-        let interval_future = delay_for(interval).fuse();
-        pin_mut!(interval_future);
         loop {
-            select! {
-                p = ack_recv.next().fuse() => {
-                    if send.unbounded_send(p.unwrap()).is_err() {
-                        return;
-                    }
-                },
-                _ = interval_future => {
-                    interval_future.set(delay_for(interval).fuse());
-                    for _ in 0..5 {
-                        let reliable = id % 5 == 0;
-                        let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
-                        id += 1;
-                        if send.unbounded_send(packet).is_err() {
-                            return;
-                        }
-                    }
+            delay_for(interval).await;
+            for _ in 0..5 {
+                let reliable = id % 5 == 0;
+                let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
+                id += 1;
+                if send.unbounded_send(packet).is_err() {
+                    return;
                 }
             }
         }
