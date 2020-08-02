@@ -1,8 +1,7 @@
-use rudp::{hand_shake::*, start_udp_loop, DeserializeError, PacketDesc};
+use rudp::{hand_shake::*, start_udp_loop, BypassResult, DeserializeError, PacketDesc};
 use std::convert::TryInto;
 use std::env;
 use std::mem::size_of;
-use std::sync::Arc;
 use tokio::{
     join,
     stream::StreamExt,
@@ -67,6 +66,13 @@ impl PacketDesc for Packet {
     }
 }
 
+fn bypass(p: Packet) -> BypassResult<Packet> {
+    match p {
+        Packet::Ping(a, b, c) => BypassResult::ToSender(Packet::Pong(a, b, c)),
+        _ => BypassResult::ToUser(p),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let env = env_logger::Env::default()
@@ -91,9 +97,7 @@ async fn main() {
     println!("Connected!");
     // 20ms
     let timeout = Duration::new(0, 20_000_000);
-    let (send, mut recv) = start_udp_loop::<Packet>(socket, timeout, 10, 10, 0);
-    let send = Arc::new(send);
-    let send_from_recv = send.clone();
+    let (send, mut recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
     let start = Instant::now();
     const WINDOW_SIZE: usize = 1000;
     let mut window: [u128; WINDOW_SIZE] = [0; WINDOW_SIZE];
@@ -104,13 +108,13 @@ async fn main() {
         loop {
             let p = recv.next().await;
             match p {
-                Some(Packet::Ping(reliable, id, timestamp)) => {
-                    let packet = Packet::Pong(reliable, id, timestamp);
-                    send_from_recv.unbounded_send(packet).unwrap();
+                Some(Packet::Ping(_, _, _)) => {
+                    panic!("Should not happen!");
                 }
                 Some(Packet::Pong(reliable, id, timestamp)) => {
                     let time = start.elapsed().as_micros() - timestamp;
-                    mean = mean * count as f64 - window[(index + 1) % WINDOW_SIZE] as f64 + time as f64;
+                    mean = mean * count as f64 - window[(index + 1) % WINDOW_SIZE] as f64
+                        + time as f64;
                     window[index] = time;
                     index = (index + 1) % WINDOW_SIZE;
                     if count < WINDOW_SIZE {

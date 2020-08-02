@@ -29,6 +29,12 @@ pub struct Receiver {
     unreliable_generations: HashMap<u32, i64>,
 }
 
+pub enum BypassResult<T> {
+    ToSender(T),
+    ToUser(T),
+    Discard,
+}
+
 fn is_new(old: Option<&i64>, current: i64) -> bool {
     if let Some(&old) = old {
         if Wrapping(current) - Wrapping(old) > Wrapping(0) {
@@ -61,21 +67,16 @@ impl Receiver {
     }
 
     /// Handle reliable packet, return true if normal, false if channel closed.
-    fn handle_reliable<T: PacketDesc>(
-        &mut self,
-        channel: &UnboundedSender<T>,
-        p: &PacketHeader,
-        data: &[u8],
-    ) -> bool {
+    fn handle_reliable<T: PacketDesc>(&mut self, p: &PacketHeader, data: &[u8]) -> Option<T> {
         if p.slot > self.slots_generation.len() as isize {
             warn!("Received reliable packet with invalid slot ID");
-            return true;
+            return None;
         }
         if !is_new(
             self.recv_generation[p.slot as usize - 1].as_ref(),
             p.generation,
         ) {
-            return true;
+            return None;
         }
         if T::ordered(p.id) {
             let old = self.unreliable_generations.get(&p.id);
@@ -83,44 +84,39 @@ impl Receiver {
                 self.unreliable_generations.insert(p.id, p.generation);
             } else {
                 // discard it
-                return true;
+                return None;
             }
         }
         let packet = T::deserialize(p.id, data);
         match packet {
             Ok(packet) => {
                 self.recv_generation[p.slot as usize - 1] = Some(p.generation);
-                channel.unbounded_send(packet).is_ok()
+                Some(packet)
             }
             Err(e) => {
                 warn!("Deserialization error: {}", e.0);
-                true
+                None
             }
         }
     }
 
-    fn handle_unreliable<T: PacketDesc>(
-        &mut self,
-        channel: &UnboundedSender<T>,
-        p: &PacketHeader,
-        data: &[u8],
-    ) -> bool {
+    fn handle_unreliable<T: PacketDesc>(&mut self, p: &PacketHeader, data: &[u8]) -> Option<T> {
         if T::ordered(p.id) {
             let old = self.unreliable_generations.get(&p.id);
             if is_new(old, p.generation) {
                 self.unreliable_generations.insert(p.id, p.generation);
             } else {
                 // discard it
-                return true;
+                return None;
             }
         }
         // just receive it
         let packet = T::deserialize(p.id, data);
         match packet {
-            Ok(packet) => channel.unbounded_send(packet).is_ok(),
+            Ok(packet) => Some(packet),
             Err(e) => {
                 warn!("Deserialization error: {}", e.0);
-                true
+                None
             }
         }
     }
@@ -140,12 +136,14 @@ impl Receiver {
         }
     }
 
-    pub async fn recv_loop<T: PacketDesc>(
+    pub async fn recv_loop<T: PacketDesc, F: Fn(T) -> BypassResult<T>>(
         &mut self,
         ack_channel: &UnboundedSender<(u32, isize, i64)>,
         channel: &UnboundedSender<T>,
+        to_sender: &UnboundedSender<T>,
         retry_max: u32,
         drop_percentage: u64,
+        bypass: F,
     ) {
         // packet size for UDP is normally 1500 bytes
         const CAPACITY: usize = 1024;
@@ -190,19 +188,29 @@ impl Receiver {
                     continue;
                 }
             };
-            let ok = if p.slot > 0 {
-                self.handle_reliable(channel, &p, &data)
-                    && ack_channel
-                        .unbounded_send((p.id, -p.slot, p.generation))
-                        .is_ok()
+            let p = if p.slot > 0 {
+                if ack_channel
+                    .unbounded_send((p.id, -p.slot, p.generation))
+                    .is_err()
+                {
+                    None
+                } else {
+                    self.handle_reliable(&p, &data)
+                }
             } else if p.slot == 0 {
-                self.handle_unreliable(channel, &p, &data)
+                self.handle_unreliable(&p, &data)
             } else {
                 self.handle_ack(&p);
-                true
+                None
             };
-            if !ok {
-                return;
+            if let Some(p) = p {
+                if match bypass(p) {
+                    BypassResult::Discard => false,
+                    BypassResult::ToSender(p) => to_sender.unbounded_send(p).is_err(),
+                    BypassResult::ToUser(p) => channel.unbounded_send(p).is_err(),
+                } {
+                    break;
+                }
             }
         }
     }
