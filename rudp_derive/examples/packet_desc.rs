@@ -1,18 +1,32 @@
 use rudp_derive::PacketDesc;
 
-#[derive(serde::Serialize, serde::Deserialize, PacketDesc)]
+#[derive(serde::Serialize, serde::Deserialize, PacketDesc, PartialEq, Debug)]
 pub enum Packet {
-    A,
+    RandomPacket {
+        number: u32,
+    },
     #[packet(reliable)]
-    B,
+    Handshake {
+        timestamp: u128,
+    },
     #[packet(ordered)]
-    C,
+    PaddleMovement {
+        position: f32,
+    },
     #[packet(reliable, ordered)]
-    D,
-    #[packet(reliable, unordered)]
-    E,
+    ReliableOrderedPacket {
+       number: u32,
+    },
 }
 
 fn main() {
-
+    use rudp::PacketDesc;
+    let handshake = Packet::Handshake {
+        timestamp: 0,
+    };
+    assert_eq!(handshake.reliable(), true);
+    assert_eq!(Packet::ordered(handshake.id()), false);
+    let mut writer = Vec::<u8>::new();
+    handshake.serialize(&mut writer);
+    assert_eq!(Packet::deserialize(handshake.id(), &writer).unwrap(), handshake);
 }
