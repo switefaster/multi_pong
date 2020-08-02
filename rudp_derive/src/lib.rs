@@ -1,11 +1,18 @@
 use proc_macro::TokenStream;
-use syn::{DeriveInput, NestedMeta, Meta, Ident, DataEnum};
+use syn::{DeriveInput, NestedMeta, Meta, Ident, DataEnum, Fields};
 use quote::quote;
+
+enum FieldType {
+    Struct,
+    Tuple,
+    Flat,
+}
 
 struct Packet {
     reliable: bool,
     ordered: bool,
     name: Ident,
+    field: FieldType,
 }
 
 #[proc_macro_derive(PacketDesc, attributes(packet))]
@@ -19,10 +26,8 @@ fn expand_desc_input(derive_input: DeriveInput) -> proc_macro2::TokenStream {
         let packets = data_to_packet_vec(data);
         let name = &derive_input.ident;
         let (id_stream, reliable_stream, ordered_stream) =
-            token_streams(&packets);
-        //FIXME: Wrap a module around the `impl`
+            token_streams(name, &packets);
         let gen = quote! {
-            use rudp::DeserializeError;
             impl rudp::PacketDesc for #name {
                 fn id(&self) -> u32 {
                     match self {
@@ -47,7 +52,7 @@ fn expand_desc_input(derive_input: DeriveInput) -> proc_macro2::TokenStream {
                     }
                 }
 
-                fn deserialize(_: u32, data: &[u8]) -> Result<Self, DeserializeError> {
+                fn deserialize(_: u32, data: &[u8]) -> Result<Self, rudp::DeserializeError> {
                     use serde_cbor::from_slice;
                     use rudp::DeserializeError;
                     from_slice(data).map_err(|err| {
@@ -89,10 +94,16 @@ fn data_to_packet_vec(data: DataEnum) -> Vec<Packet> {
                 }
             }
         }
+        let field_type = match var.fields {
+            Fields::Unit => FieldType::Flat,
+            Fields::Named(_) => FieldType::Struct,
+            Fields::Unnamed(_) => FieldType::Tuple,
+        };
         packets.push(Packet {
             reliable,
             ordered,
             name: var.ident.clone(),
+            field: field_type,
         });
     }
     packets
@@ -100,7 +111,7 @@ fn data_to_packet_vec(data: DataEnum) -> Vec<Packet> {
 
 /// ## Return
 /// (id, reliable, ordered)
-fn token_streams(packets: &Vec<Packet>) -> (proc_macro2::TokenStream, proc_macro2::TokenStream, proc_macro2::TokenStream) {
+fn token_streams(ident: &Ident, packets: &Vec<Packet>) -> (proc_macro2::TokenStream, proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let mut id_list: Vec<proc_macro2::TokenStream> = Vec::with_capacity(packets.len());
     let mut reliable_list: Vec<proc_macro2::TokenStream> = Vec::with_capacity(packets.len());
     let mut ordered_list: Vec<proc_macro2::TokenStream> = Vec::with_capacity(packets.len());
@@ -109,11 +120,39 @@ fn token_streams(packets: &Vec<Packet>) -> (proc_macro2::TokenStream, proc_macro
         let name = &packet.name;
         let reliable = packet.reliable;
         let ordered = packet.ordered;
-        let match_id = quote! {
-            #name => #id,
+        let match_id = match packet.field {
+            FieldType::Flat => {
+                quote! {
+                    #name => #id,
+                }
+            },
+            FieldType::Struct => {
+                quote! {
+                    #name{..} => #id,
+                }
+            },
+            FieldType::Tuple => {
+                quote! {
+                    #name(_) => #id,
+                }
+            },
         };
-        let match_reliable = quote! {
-            #name => #reliable,
+        let match_reliable = match packet.field {
+            FieldType::Flat => {
+                quote! {
+                    #name => #reliable,
+                }
+            },
+            FieldType::Struct => {
+                quote! {
+                    #name{..} => #reliable,
+                }
+            },
+            FieldType::Tuple => {
+                quote! {
+                    #name(_) => #reliable,
+                }
+            },
         };
         let match_ordered = quote! {
             #id => #ordered,
@@ -123,14 +162,14 @@ fn token_streams(packets: &Vec<Packet>) -> (proc_macro2::TokenStream, proc_macro
         ordered_list.push(match_ordered);
     }
     let placeholder = quote! {
-        _ => false,
+        _ => panic!("Invalid ID!"),
     };
     ordered_list.push(placeholder);
     let id_gen = quote! {
-        #(#id_list)*
+        #(#ident::#id_list)*
     };
     let reliable_gen = quote! {
-        #(#reliable_list)*
+        #(#ident::#reliable_list)*
     };
     let ordered_gen = quote! {
         #(#ordered_list)*
