@@ -95,7 +95,10 @@ async fn main() {
     let send = Arc::new(send);
     let send_from_recv = send.clone();
     let start = Instant::now();
-    let mut count = 0.0;
+    const WINDOW_SIZE: usize = 1000;
+    let mut window: [u128; WINDOW_SIZE] = [0; WINDOW_SIZE];
+    let mut index = 0;
+    let mut count = 0;
     let mut mean = 0.0;
     let recv_task = tokio::spawn(async move {
         loop {
@@ -107,15 +110,22 @@ async fn main() {
                 }
                 Some(Packet::Pong(reliable, id, timestamp)) => {
                     let time = start.elapsed().as_micros() - timestamp;
-                    mean = (count * mean + time as f64) / (count + 1.0);
-                    count += 1.0;
-                    println!(
-                        "mean: {:>8}, ID: {:>4}, time: {:>8}µs, reliable: {}",
-                        mean.round(),
-                        id,
-                        time,
-                        reliable
-                    );
+                    mean = mean * count as f64 - window[(index + 1) % WINDOW_SIZE] as f64 + time as f64;
+                    window[index] = time;
+                    index = (index + 1) % WINDOW_SIZE;
+                    if count < WINDOW_SIZE {
+                        count += 1;
+                    }
+                    mean /= count as f64;
+                    if id % 100 == 0 {
+                        println!(
+                            "mean: {:>8}, ID: {:>5}, time: {:>8}µs, reliable: {}",
+                            mean.round(),
+                            id,
+                            time,
+                            reliable
+                        );
+                    }
                 }
                 None => {
                     return;
@@ -125,16 +135,14 @@ async fn main() {
     });
     let send_task = tokio::spawn(async move {
         let mut id = 0;
-        let interval = Duration::new(0, 50_000_000);
+        let interval = Duration::new(0, 5_000_000);
         loop {
             delay_for(interval).await;
-            for _ in 0..5 {
-                let reliable = id % 5 == 0;
-                let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
-                id += 1;
-                if send.unbounded_send(packet).is_err() {
-                    return;
-                }
+            let reliable = id % 5 == 0;
+            let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
+            id += 1;
+            if send.unbounded_send(packet).is_err() {
+                return;
             }
         }
     });
