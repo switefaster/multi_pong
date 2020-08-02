@@ -1,4 +1,4 @@
-use super::protocol::{modify_header, PacketDesc, PacketHeader};
+use super::protocol::{PacketDesc, PacketHeader};
 use futures::{
     channel::mpsc::UnboundedReceiver,
     future::{Fuse, FusedFuture, FutureExt},
@@ -14,11 +14,11 @@ use std::{
 };
 use tokio::{
     net::udp::SendHalf,
-    sync::{Mutex, Notify},
+    sync::{Notify, Mutex},
     time::{delay_until, Delay, Duration, Instant},
 };
 
-pub struct Sender {
+pub struct Sender<T: PacketDesc> {
     retry_count: u32,
     retry_max: u32,
     generation: i64,
@@ -27,12 +27,13 @@ pub struct Sender {
     slots_generation: Arc<Vec<AtomicI64>>,
     slots_used: Arc<Vec<AtomicBool>>,
     notify: Arc<Notify>,
-    queue: VecDeque<Vec<u8>>,
+    queue: VecDeque<T>,
+    used_queue: VecDeque<usize>,
 }
 
 struct Slot(Vec<u8>, Instant);
 
-impl Sender {
+impl<T: PacketDesc> Sender<T> {
     pub fn new(inner: SendHalf, timeout: Duration, capacity: usize, retry_max: u32) -> Self {
         let inner = Arc::new(Mutex::new(inner));
         let mut slots_generation = Vec::with_capacity(capacity);
@@ -54,6 +55,7 @@ impl Sender {
             slots_used,
             notify,
             queue: VecDeque::new(),
+            used_queue: VecDeque::with_capacity(capacity)
         }
     }
 
@@ -73,16 +75,15 @@ impl Sender {
         self.inner.clone()
     }
 
-    fn get_oldest<'a>(&mut self, slots: &'a mut [Option<Slot>]) -> Option<&'a mut Slot> {
+    fn get_oldest<'a>(&mut self, slots: &'a mut [Slot]) -> Option<&'a mut Slot> {
         let mut oldest: Option<&mut Slot> = None;
-        for (slot, used) in slots.iter_mut().zip(self.slots_used.iter()) {
-            let used = used.load(Ordering::Acquire);
+        while let Some(&i) = self.used_queue.front() {
+            let used = self.slots_used[i].load(Ordering::Relaxed);
             if used {
-                // we are sure that if the slot is used, it must be Some(Slot<T>)
-                let time = slot.as_ref().unwrap().1;
-                if oldest.is_none() || time < oldest.as_ref().unwrap().1 {
-                    oldest = slot.as_mut();
-                }
+                oldest = Some(&mut slots[i]);
+                break;
+            } else {
+                self.used_queue.pop_front();
             }
         }
         oldest
@@ -113,24 +114,28 @@ impl Sender {
 
     fn put_in<'a>(
         &mut self,
-        slots: &'a mut [Option<Slot>],
-        mut data: Vec<u8>,
+        slots: &'a mut [Slot],
+        data: T,
         empty: usize,
     ) -> &'a Vec<u8> {
         let generation = self.generation;
         self.generation += 1;
-        self.slots_used[empty].store(true, Ordering::Release);
+        self.slots_used[empty].store(true, Ordering::Relaxed);
         self.slots_generation[empty].store(generation, Ordering::Release);
-        modify_header(&mut data, empty as isize + 1, generation);
-        slots[empty] = Some(Slot(data, Instant::now()));
-        &slots[empty].as_ref().unwrap().0
+        self.used_queue.push_back(empty);
+        slots[empty].0.clear();
+        PacketHeader::new(data.id(), empty as isize + 1, generation).serialize(&mut slots[empty].0);
+        data.serialize(&mut slots[empty].0);
+        &slots[empty].0
     }
 
-    fn resend<'a>(&mut self, slots: &'a mut [Option<Slot>]) -> Option<&'a Vec<u8>> {
+    fn resend<'a>(&mut self, slots: &'a mut [Slot]) -> Option<&'a Vec<u8>> {
         let timeout = self.timeout;
         let oldest = self.get_oldest(slots);
         match oldest {
             Some(mut oldest) if oldest.1.elapsed() > timeout => {
+                let index = self.used_queue.pop_front().unwrap();
+                self.used_queue.push_back(index);
                 oldest.1 = Instant::now();
                 Some(&oldest.0)
             }
@@ -138,28 +143,33 @@ impl Sender {
         }
     }
 
-    async fn queue<T: PacketDesc>(&mut self, data: T) -> Option<Vec<u8>> {
+    async fn queue(&mut self, data: T) -> Option<T> {
         if data.reliable() {
             // slot and generation are just dummy value, would be set to the actual value when we
             // call `put_in`
-            let mut payload = PacketHeader::new(data.id(), 0, 0).serialize();
-            data.serialize(&mut payload);
-            self.queue.push_back(payload);
+            self.queue.push_back(data);
             None
         } else {
-            let generation = self.generation;
-            self.generation += 1;
-            let mut payload = PacketHeader::new(data.id(), 0, generation).serialize();
-            data.serialize(&mut payload);
-            Some(payload)
+            Some(data)
         }
     }
 
-    pub async fn send_loop<T: PacketDesc>(&mut self, channel: &mut UnboundedReceiver<T>) {
+    fn prepare_unreliable<'a>(&mut self, payload: &'a mut Vec<u8>, packet: &T) -> &'a [u8] {
+        let generation = self.generation;
+        self.generation += 1;
+        payload.clear();
+        PacketHeader::new(packet.id(), 0, generation).serialize(payload);
+        packet.serialize(payload);
+        payload
+    }
+
+    pub async fn send_loop(&mut self, channel: &mut UnboundedReceiver<T>) {
         let mut slots = Vec::with_capacity(self.slots_used.len());
+        let now = Instant::now();
         for _ in 0..self.slots_used.len() {
-            slots.push(None);
+            slots.push(Slot(Vec::with_capacity(100), now));
         }
+        let mut unreliable_payload = Vec::with_capacity(100);
         let timeout = Fuse::<Delay>::terminated();
         let notify = self.get_notify();
         let ack = notify.notified().fuse();
@@ -175,7 +185,8 @@ impl Sender {
                     loop {
                         match item {
                             Some(p) => if let Some(p) = self.queue(p).await {
-                                if !self.send(&p).await {
+                                let payload = self.prepare_unreliable(&mut unreliable_payload, &p);
+                                if !self.send(payload).await {
                                     return;
                                 }
                             },

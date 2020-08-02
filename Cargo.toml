@@ -4,3 +4,7 @@ members = [
     "rudp",
     "rudp_derive"
 ]
+
+[profile.release]
+debug = true
+lto = "fat"
