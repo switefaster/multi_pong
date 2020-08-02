@@ -24,6 +24,7 @@ pub struct PacketHeader {
     pub generation: i64,
 }
 
+#[derive(Debug, Clone)]
 pub struct DeserializeError(pub String);
 
 const SLOT_START: usize = size_of::<u32>();
