@@ -36,8 +36,8 @@ fn expand_desc_input(derive_input: DeriveInput) -> proc_macro2::TokenStream {
                 }
 
                 fn serialize(&self, writer: &mut Vec<u8>) {
-                     use serde_cbor::to_vec;
-                    writer.extend(to_vec(self).unwrap().iter());
+                    use serde_cbor::to_writer;
+                    to_writer(writer, self).unwrap();
                 }
 
                 fn reliable(&self) -> bool {
