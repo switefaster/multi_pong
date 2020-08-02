@@ -8,10 +8,8 @@ pub use protocol::{DeserializeError, PacketDesc};
 use receiver::{Receiver, ack_loop};
 use sender::Sender;
 use std::marker::{Send, Sync};
-use std::thread;
 use tokio::{net::UdpSocket, select, time::Duration};
 
-#[tokio::main]
 async fn udp_loop<T: PacketDesc + Send + Sync + 'static>(
     socket: UdpSocket,
     timeout: Duration,
@@ -65,7 +63,7 @@ pub fn start_udp_loop<T: PacketDesc + Send + Sync + 'static>(
     debug_assert!(drop_percentage < 100);
     let (to_background, from_foreground) = unbounded();
     let (to_foreground, from_background) = unbounded();
-    thread::spawn(move || {
+    tokio::spawn(async move {
         udp_loop::<T>(
             socket,
             timeout,
@@ -74,7 +72,7 @@ pub fn start_udp_loop<T: PacketDesc + Send + Sync + 'static>(
             drop_percentage,
             from_foreground,
             to_foreground,
-        );
+        ).await;
     });
     (to_background, from_background)
 }
