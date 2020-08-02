@@ -21,7 +21,7 @@ async fn udp_loop<T: PacketDesc + Send + Sync + 'static>(
 ) {
     let (ack_from, mut ack_to) = unbounded();
     let (recv, send) = socket.split();
-    let mut sender = Sender::new(send, timeout, slot_capacity, max_retry);
+    let mut sender = Sender::<T>::new(send, timeout, slot_capacity, max_retry);
     let send_half = sender.get_send_half();
     let mut receiver = Receiver::new(recv, &sender);
     let send_task = tokio::spawn(async move {

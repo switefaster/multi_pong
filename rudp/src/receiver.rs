@@ -42,7 +42,7 @@ fn is_new(old: Option<&i64>, current: i64) -> bool {
 }
 
 impl Receiver {
-    pub fn new(inner: RecvHalf, sender: &Sender) -> Self {
+    pub fn new<T: PacketDesc>(inner: RecvHalf, sender: &Sender<T>) -> Self {
         let slots_generation = sender.get_slots_generation();
         let slots_used = sender.get_slots_used();
         let notify = sender.get_notify();
@@ -212,7 +212,8 @@ pub async fn ack_loop(
     send_half: Arc<Mutex<SendHalf>>,
     ack_channel: &mut UnboundedReceiver<(u32, isize, i64)>,
 ) {
-    let mut payload = PacketHeader::new(0, 0, 0).serialize();
+    let mut payload = Vec::new();
+    PacketHeader::new(0, 0, 0).serialize(&mut payload);
     while let Some(mut p) = ack_channel.next().await {
         let mut send = send_half.lock().await;
         loop {

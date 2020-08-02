@@ -40,13 +40,10 @@ impl PacketHeader {
         }
     }
 
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut result: Vec<u8> =
-            Vec::with_capacity(size_of::<u32>() + size_of::<isize>() + size_of::<i64>());
+    pub fn serialize(&self, result: &mut Vec<u8>) {
         result.extend(self.id.to_be_bytes().iter());
         result.extend(self.slot.to_be_bytes().iter());
         result.extend(self.generation.to_be_bytes().iter());
-        result
     }
 
     pub fn deserialize(data: &[u8]) -> Result<(Self, &[u8]), DeserializeError> {
@@ -87,7 +84,3 @@ pub fn modify_header(data: &mut [u8], id: u32, slot: isize, generation: i64) {
     data[GENERATION_START..GENERATION_END].copy_from_slice(&generation.to_be_bytes());
 }
 
-pub fn modify_slot(data: &mut [u8], slot: isize, generation: i64) {
-    data[SLOT_START..GENERATION_START].copy_from_slice(&slot.to_be_bytes());
-    data[GENERATION_START..GENERATION_END].copy_from_slice(&generation.to_be_bytes());
-}
