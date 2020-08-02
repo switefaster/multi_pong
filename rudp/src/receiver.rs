@@ -17,7 +17,7 @@ use std::{
 };
 use tokio::{
     net::udp::{RecvHalf, SendHalf},
-    sync::{Notify, Mutex},
+    sync::{Mutex, Notify},
 };
 
 pub struct Receiver {
@@ -71,24 +71,31 @@ impl Receiver {
             warn!("Received reliable packet with invalid slot ID");
             return true;
         }
-        let new = is_new(
+        if !is_new(
             self.recv_generation[p.slot as usize - 1].as_ref(),
             p.generation,
-        );
-        if new {
-            let packet = T::deserialize(p.id, data);
-            match packet {
-                Ok(packet) => {
-                    self.recv_generation[p.slot as usize - 1] = Some(p.generation);
-                    channel.unbounded_send(packet).is_ok()
-                }
-                Err(e) => {
-                    warn!("Deserialization error: {}", e.0);
-                    true
-                }
+        ) {
+            return true;
+        }
+        if T::ordered(p.id) {
+            let old = self.unreliable_generations.get(&p.id);
+            if is_new(old, p.generation) {
+                self.unreliable_generations.insert(p.id, p.generation);
+            } else {
+                // discard it
+                return true;
             }
-        } else {
-            true
+        }
+        let packet = T::deserialize(p.id, data);
+        match packet {
+            Ok(packet) => {
+                self.recv_generation[p.slot as usize - 1] = Some(p.generation);
+                channel.unbounded_send(packet).is_ok()
+            }
+            Err(e) => {
+                warn!("Deserialization error: {}", e.0);
+                true
+            }
         }
     }
 
