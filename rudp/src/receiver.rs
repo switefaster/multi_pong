@@ -61,7 +61,7 @@ impl Receiver {
     }
 
     /// Handle reliable packet, return true if normal, false if channel closed.
-    async fn handle_reliable<T: PacketDesc>(
+    fn handle_reliable<T: PacketDesc>(
         &mut self,
         channel: &UnboundedSender<T>,
         p: &PacketHeader,
@@ -191,7 +191,7 @@ impl Receiver {
                 }
             };
             let ok = if p.slot > 0 {
-                self.handle_reliable(channel, &p, &data).await
+                self.handle_reliable(channel, &p, &data)
                     && ack_channel
                         .unbounded_send((p.id, -p.slot, p.generation))
                         .is_ok()
