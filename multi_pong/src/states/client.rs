@@ -1,4 +1,4 @@
-use crate::network::{create_client_background_loop, NetworkCommunication, Packet};
+use crate::network::{init_client, NETWORK, NetworkCommunication, Packet};
 use crate::states::{CurrentState, PlayerNameResource};
 use amethyst::ecs::Entity;
 use amethyst::input::{is_close_requested, StringBindings};
@@ -45,9 +45,7 @@ impl SimpleState for ClientAddrInput {
                             let text = storage.get(input).unwrap();
                             let address = text.text.clone();
                             std::mem::drop(storage);
-                            data.world
-                                .insert(create_client_background_loop(address.as_str()));
-                            return Trans::Push(Box::new(ClientConnecting));
+                            init_client(address);
                         }
                     }
                 }
@@ -72,6 +70,12 @@ impl SimpleState for ClientAddrInput {
             });
         }
 
+        if let Ok(mut network) = NETWORK.try_lock() {
+            if network.is_some() {
+                data.world.insert(network.take());
+                return Trans::Push(Box::new(ClientConnecting));
+            }
+        }
         Trans::None
     }
 }

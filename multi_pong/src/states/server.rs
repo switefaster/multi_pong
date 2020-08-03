@@ -1,4 +1,4 @@
-use crate::network::create_server_background_loop;
+use crate::network::{init_server, NETWORK};
 use crate::states::CurrentState;
 use amethyst::ecs::Entity;
 use amethyst::input::{is_close_requested, StringBindings};
@@ -45,9 +45,7 @@ impl SimpleState for ServerPortInput {
                             let text = storage.get(input).unwrap();
                             let port = text.text.clone();
                             std::mem::drop(storage);
-                            data.world
-                                .insert(create_server_background_loop(port.parse().unwrap()));
-                            return Trans::Push(Box::new(ServerWait));
+                            init_server(port.parse().unwrap());
                         }
                     }
                 }
@@ -72,6 +70,12 @@ impl SimpleState for ServerPortInput {
             });
         }
 
+        if let Ok(mut network) = NETWORK.try_lock() {
+            if network.is_some() {
+                data.world.insert(network.take());
+                return Trans::Push(Box::new(ServerWait));
+            }
+        }
         Trans::None
     }
 }

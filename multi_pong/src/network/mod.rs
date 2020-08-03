@@ -4,6 +4,7 @@ use rudp::{start_udp_loop, BypassResult};
 use rudp_derive::PacketDesc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::thread;
 use tokio::time::{delay_for, Instant};
 
 pub enum Side {
@@ -66,8 +67,7 @@ pub enum Packet {
 const MAGIC: &[u8] = b"MULTI_PONG";
 lazy_static::lazy_static! {
     pub static ref GLOBAL_PING: Mutex<u128> = Mutex::new(0);
-}
-lazy_static::lazy_static! {
+    pub static ref NETWORK: Mutex<Option<NetworkCommunication>> = Mutex::new(None);
     static ref GLOBAL_TIMER: Instant = Instant::now();
 }
 
@@ -84,7 +84,7 @@ fn bypass(p: Packet) -> BypassResult<Packet> {
 }
 
 #[tokio::main]
-pub async fn create_server_background_loop(port: u16) -> NetworkCommunication {
+async fn create_server_background_loop(port: u16) -> NetworkCommunication {
     let socket = server_listen(format!("0.0.0.0:{}", port).as_str(), MAGIC).await;
     let timeout = Duration::new(0, 20_000_000);
     let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
@@ -101,7 +101,7 @@ pub async fn create_server_background_loop(port: u16) -> NetworkCommunication {
 }
 
 #[tokio::main]
-pub async fn create_client_background_loop(addr: &str) -> NetworkCommunication {
+async fn create_client_background_loop(addr: &str) -> NetworkCommunication {
     let socket = client_connect("0.0.0.0:0", addr, MAGIC).await;
     let timeout = Duration::new(0, 20_000_000);
     let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
@@ -116,3 +116,16 @@ pub async fn create_client_background_loop(addr: &str) -> NetworkCommunication {
     });
     NetworkCommunication::new(recv, send, Side::Client)
 }
+
+pub fn init_server(port: u16) {
+    thread::spawn(move || {
+        *NETWORK.lock().unwrap() = Some(create_server_background_loop(port));
+    });
+}
+
+pub fn init_client(addr: String) {
+    thread::spawn(move || {
+        *NETWORK.lock().unwrap() = Some(create_client_background_loop(&addr));
+    });
+}
+
