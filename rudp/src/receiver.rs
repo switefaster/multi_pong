@@ -1,11 +1,8 @@
 use super::{
-    protocol::{modify_header, PacketDesc, PacketHeader},
+    protocol::{PacketDesc, PacketHeader},
     sender::Sender,
 };
-use futures::{
-    channel::mpsc::{UnboundedReceiver, UnboundedSender},
-    stream::StreamExt,
-};
+use futures::channel::mpsc::UnboundedSender;
 use log::warn;
 use std::{
     collections::HashMap,
@@ -15,10 +12,7 @@ use std::{
         Arc,
     },
 };
-use tokio::{
-    net::udp::{RecvHalf, SendHalf},
-    sync::{Mutex, Notify},
-};
+use tokio::{net::udp::RecvHalf, sync::Notify};
 
 pub struct Receiver {
     inner: RecvHalf,
@@ -211,31 +205,6 @@ impl Receiver {
                 } {
                     break;
                 }
-            }
-        }
-    }
-}
-
-pub async fn ack_loop(
-    send_half: Arc<Mutex<SendHalf>>,
-    ack_channel: &mut UnboundedReceiver<(u32, isize, i64)>,
-) {
-    let mut payload = Vec::new();
-    PacketHeader::new(0, 0, 0).serialize(&mut payload);
-    while let Some(mut p) = ack_channel.next().await {
-        let mut send = send_half.lock().await;
-        loop {
-            modify_header(&mut payload, p.0, p.1, p.2);
-            if let Err(e) = send.send(&payload).await {
-                warn!("Error sending ACK: {}", e.to_string());
-            }
-            if let Ok(next) = ack_channel.try_next() {
-                if next.is_none() {
-                    return;
-                }
-                p = next.unwrap();
-            } else {
-                break;
             }
         }
     }

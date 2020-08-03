@@ -1,4 +1,4 @@
-use super::protocol::{PacketDesc, PacketHeader};
+use super::protocol::{PacketDesc, PacketHeader, modify_header};
 use futures::{
     channel::mpsc::UnboundedReceiver,
     future::{Fuse, FusedFuture, FutureExt},
@@ -14,7 +14,7 @@ use std::{
 };
 use tokio::{
     net::udp::SendHalf,
-    sync::{Notify, Mutex},
+    sync::Notify,
     time::{delay_until, Delay, Duration, Instant},
 };
 
@@ -23,7 +23,7 @@ pub struct Sender<T: PacketDesc> {
     retry_max: u32,
     generation: i64,
     timeout: Duration,
-    inner: Arc<Mutex<SendHalf>>,
+    inner: SendHalf,
     slots_generation: Arc<Vec<AtomicI64>>,
     slots_used: Arc<Vec<AtomicBool>>,
     notify: Arc<Notify>,
@@ -35,7 +35,6 @@ struct Slot(Vec<u8>, Instant);
 
 impl<T: PacketDesc> Sender<T> {
     pub fn new(inner: SendHalf, timeout: Duration, capacity: usize, retry_max: u32) -> Self {
-        let inner = Arc::new(Mutex::new(inner));
         let mut slots_generation = Vec::with_capacity(capacity);
         let mut slots_used = Vec::with_capacity(capacity);
         for _ in 0..capacity {
@@ -71,10 +70,6 @@ impl<T: PacketDesc> Sender<T> {
         self.slots_used.clone()
     }
 
-    pub fn get_send_half(&self) -> Arc<Mutex<SendHalf>> {
-        self.inner.clone()
-    }
-
     fn get_oldest<'a>(&mut self, slots: &'a mut [Slot]) -> Option<&'a mut Slot> {
         let mut oldest: Option<&mut Slot> = None;
         while let Some(&i) = self.used_queue.front() {
@@ -103,7 +98,7 @@ impl<T: PacketDesc> Sender<T> {
 
     /// Attempt to send the buffer once, return false if send continuously failed. (reaches the max retry)
     async fn send(&mut self, buffer: &[u8]) -> bool {
-        if self.inner.lock().await.send(&buffer).await.is_ok() {
+        if self.inner.send(&buffer).await.is_ok() {
             self.retry_count = 0;
             true
         } else {
@@ -163,58 +158,72 @@ impl<T: PacketDesc> Sender<T> {
         payload
     }
 
-    pub async fn send_loop(&mut self, channel: &mut UnboundedReceiver<T>) {
+    pub async fn send_loop(&mut self, channel: &mut UnboundedReceiver<T>, ack_channel: &mut UnboundedReceiver<(u32, isize, i64)>,) {
         let mut slots = Vec::with_capacity(self.slots_used.len());
         let now = Instant::now();
         for _ in 0..self.slots_used.len() {
             slots.push(Slot(Vec::with_capacity(100), now));
         }
+        let mut ack_payload = Vec::new();
+        PacketHeader::new(0, 0, 0).serialize(&mut ack_payload);
         let mut unreliable_payload = Vec::with_capacity(100);
+
         let timeout = Fuse::<Delay>::terminated();
         let notify = self.get_notify();
-        let ack = notify.notified().fuse();
+        let got_ack = notify.notified().fuse();
         let receive = channel.into_future().fuse();
-        pin_mut!(timeout, ack, receive);
+        let ack_receive = ack_channel.into_future().fuse();
+        pin_mut!(timeout, got_ack, receive, ack_receive);
         loop {
-            select_biased! {
-                _ = timeout => (),
-                _ = ack => {
-                    ack.set(notify.notified().fuse());
-                },
-                (mut item, stream) = receive => {
-                    loop {
-                        match item {
-                            Some(p) => if let Some(p) = self.queue(p).await {
-                                let payload = self.prepare_unreliable(&mut unreliable_payload, &p);
-                                if !self.send(payload).await {
-                                    return;
-                                }
-                            },
-                            None => {
-                                return;
-                            }
-                        }
-                        if let Ok(p) = stream.try_next() {
-                            item = p;
-                        } else {
-                            break;
-                        }
-                    }
-                    receive.set(stream.into_future().fuse());
-                },
-            };
             if timeout.is_terminated() {
                 if let Some(slot) = self.get_oldest(&mut slots) {
                     let deadline = slot.1 + self.timeout;
                     timeout.set(delay_until(deadline).fuse());
                 }
             }
+            select_biased! {
+                _ = timeout => (),
+                _ = got_ack => {
+                    got_ack.set(notify.notified().fuse());
+                },
+                (mut item, stream) = receive => {
+                    receive.set(stream.into_future().fuse());
+                    match item {
+                        Some(p) => if let Some(p) = self.queue(p).await {
+                            let payload = self.prepare_unreliable(&mut unreliable_payload, &p);
+                            if !self.send(payload).await {
+                                return;
+                            }
+                            continue;
+                        },
+                        None => {
+                            return;
+                        }
+                    }
+                },
+                (p, stream) = ack_receive => {
+                    ack_receive.set(stream.into_future().fuse());
+                    match p {
+                        Some(p) => {
+                            modify_header(&mut ack_payload, p.0, p.1, p.2);
+                            if !self.send(&ack_payload).await {
+                                return;
+                            }
+                            continue;
+                        },
+                        None => {
+                            return;
+                        }
+                    }
+                }
+            };
 
             // resend all timeout packets
-            while let Some(p) = self.resend(&mut slots) {
+            if let Some(p) = self.resend(&mut slots) {
                 if !self.send(&p).await {
                     return;
                 }
+                continue;
             }
             // send all packets in queue if there is some slot which is empty...
             while let Some(empty) = self.find_empty_slot() {
@@ -224,6 +233,7 @@ impl<T: PacketDesc> Sender<T> {
                     if !self.send(&p).await {
                         return;
                     }
+                    break;
                 } else {
                     break;
                 }
