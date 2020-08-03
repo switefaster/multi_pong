@@ -1,4 +1,3 @@
-#![feature(integer_atomics)]
 #![recursion_limit = "256"]
 mod constants;
 mod network;
