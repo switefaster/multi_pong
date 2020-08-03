@@ -1,10 +1,10 @@
-use amethyst::{SimpleState, GameData, StateData, StateEvent, SimpleTrans, Trans};
-use amethyst::ecs::Entity;
-use amethyst::input::{StringBindings, is_close_requested};
-use amethyst::prelude::WorldExt;
-use amethyst::ui::{UiCreator, UiFinder, UiEventType, UiText};
-use crate::network::{create_client_background_loop, NetworkCommunication, Instruction, Packet};
+use crate::network::{create_client_background_loop, NetworkCommunication, Packet};
 use crate::states::{CurrentState, PlayerNameResource};
+use amethyst::ecs::Entity;
+use amethyst::input::{is_close_requested, StringBindings};
+use amethyst::prelude::WorldExt;
+use amethyst::ui::{UiCreator, UiEventType, UiFinder, UiText};
+use amethyst::{GameData, SimpleState, SimpleTrans, StateData, StateEvent, Trans};
 
 #[derive(Default)]
 pub struct ClientAddrInput {
@@ -24,7 +24,11 @@ impl SimpleState for ClientAddrInput {
         data.world.delete_all();
     }
 
-    fn handle_event(&mut self, data: StateData<'_, GameData<'_, '_>>, event: StateEvent<StringBindings>) -> SimpleTrans {
+    fn handle_event(
+        &mut self,
+        data: StateData<'_, GameData<'_, '_>>,
+        event: StateEvent<StringBindings>,
+    ) -> SimpleTrans {
         match event {
             StateEvent::Window(event) => {
                 if is_close_requested(&event) {
@@ -41,19 +45,20 @@ impl SimpleState for ClientAddrInput {
                             let text = storage.get(input).unwrap();
                             let address = text.text.clone();
                             std::mem::drop(storage);
-                            data.world.insert(create_client_background_loop(address + ":4001"));
+                            data.world
+                                .insert(create_client_background_loop(address.as_str()));
                             return Trans::Push(Box::new(ClientConnecting));
                         }
                     }
                 }
                 Trans::None
             }
-            _ => Trans::None
+            _ => Trans::None,
         }
     }
 
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
-        let StateData { world, ..} = data;
+        let StateData { world, .. } = data;
 
         if self.button.is_none() {
             world.exec(|finder: UiFinder| {
@@ -82,9 +87,11 @@ impl SimpleState for ClientConnecting {
         let mut comm = world.write_resource::<NetworkCommunication>();
         let name = world.read_resource::<PlayerNameResource>();
         if let Some(ref mut sender) = comm.sender {
-            sender.unbounded_send(Instruction::SendPacket(Packet::Handshake {
-                player_name: name.my_name.clone().unwrap(),
-            })).unwrap();
+            sender
+                .unbounded_send(Packet::Handshake {
+                    player_name: name.my_name.clone().unwrap(),
+                })
+                .unwrap();
         }
     }
 

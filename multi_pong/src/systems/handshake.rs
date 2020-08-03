@@ -1,3 +1,6 @@
+use crate::network::{NetworkCommunication, Packet};
+use crate::states::{CurrentState, PlayerNameResource};
+use amethyst::prelude::World;
 use amethyst::{
     core::{
         shrev::{EventChannel, ReaderId},
@@ -5,9 +8,6 @@ use amethyst::{
     },
     ecs::{Read, System, SystemData, Write},
 };
-use crate::network::{Packet, Instruction, NetworkCommunication, ResponseState};
-use crate::states::{PlayerNameResource, CurrentState};
-use amethyst::prelude::World;
 
 #[derive(Default)]
 pub struct HandshakeSystemDesc;
@@ -15,28 +15,24 @@ pub struct HandshakeSystemDesc;
 impl<'a, 'b> SystemDesc<'a, 'b, HandshakeSystem> for HandshakeSystemDesc {
     fn build(self, world: &mut World) -> HandshakeSystem {
         <HandshakeSystem as System<'_>>::SystemData::setup(world);
-        let reader = world
-            .fetch_mut::<EventChannel<ResponseState>>()
-            .register_reader();
+        let reader = world.fetch_mut::<EventChannel<Packet>>().register_reader();
         HandshakeSystem::new(reader)
     }
 }
 
 pub struct HandshakeSystem {
-    reader: ReaderId<ResponseState>,
+    reader: ReaderId<Packet>,
 }
 
 impl HandshakeSystem {
-    fn new(reader: ReaderId<ResponseState>) -> Self {
-        Self {
-            reader,
-        }
+    fn new(reader: ReaderId<Packet>) -> Self {
+        Self { reader }
     }
 }
 
 impl<'a> System<'a> for HandshakeSystem {
     type SystemData = (
-        Read<'a, EventChannel<ResponseState>>,
+        Read<'a, EventChannel<Packet>>,
         Write<'a, NetworkCommunication>,
         Write<'a, PlayerNameResource>,
         Write<'a, CurrentState>,
@@ -44,13 +40,15 @@ impl<'a> System<'a> for HandshakeSystem {
 
     fn run(&mut self, (event_channel, mut comm, mut name, mut state): Self::SystemData) {
         for event in event_channel.read(&mut self.reader) {
-            if let ResponseState::PacketReceived(Packet::Handshake {player_name}) = event {
+            if let Packet::Handshake { player_name } = event {
                 let is_server = comm.is_server();
                 if let Some(ref mut sender) = comm.sender {
                     if is_server {
-                        sender.unbounded_send(Instruction::SendPacket(Packet::Handshake {
-                            player_name: name.my_name.clone().unwrap(),
-                        })).unwrap();
+                        sender
+                            .unbounded_send(Packet::Handshake {
+                                player_name: name.my_name.clone().unwrap(),
+                            })
+                            .unwrap();
                     }
                     name.rival_name = Some(player_name.clone());
                     *state = CurrentState::InGame;
