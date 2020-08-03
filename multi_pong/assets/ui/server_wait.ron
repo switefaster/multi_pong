@@ -31,7 +31,7 @@ Container(
                         stretch: XY( x_margin: 0., y_margin: 0., keep_aspect_ratio: false ),
                     ),
                     text: (
-                        text: "PORT: 4001, WAITING FOR PLAYER TO JOIN...",
+                        text: "WAITING FOR PLAYER TO JOIN...",
                         font: File("font/square.ttf", ("TTF", ())),
                         font_size: 20.,
                         color: (1.0, 1.0, 1.0, 1.0),

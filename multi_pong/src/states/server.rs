@@ -1,8 +1,80 @@
-use amethyst::{SimpleState, GameData, StateData, SimpleTrans, Trans};
-use amethyst::ui::UiCreator;
 use crate::network::create_server_background_loop;
-use amethyst::prelude::WorldExt;
 use crate::states::CurrentState;
+use amethyst::ecs::Entity;
+use amethyst::input::{is_close_requested, StringBindings};
+use amethyst::prelude::WorldExt;
+use amethyst::ui::{UiCreator, UiEventType, UiFinder, UiText};
+use amethyst::{GameData, SimpleState, SimpleTrans, StateData, StateEvent, Trans};
+
+#[derive(Default)]
+pub struct ServerPortInput {
+    button: Option<Entity>,
+    input: Option<Entity>,
+}
+
+impl SimpleState for ServerPortInput {
+    fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
+        let world = data.world;
+        world.exec(|mut creator: UiCreator<'_>| {
+            creator.create("ui/server_port_input.ron", ());
+        });
+    }
+
+    fn on_pause(&mut self, data: StateData<'_, GameData<'_, '_>>) {
+        data.world.delete_all();
+    }
+
+    fn handle_event(
+        &mut self,
+        data: StateData<'_, GameData<'_, '_>>,
+        event: StateEvent<StringBindings>,
+    ) -> SimpleTrans {
+        match event {
+            StateEvent::Window(event) => {
+                if is_close_requested(&event) {
+                    Trans::Quit
+                } else {
+                    Trans::None
+                }
+            }
+            StateEvent::Ui(event) => {
+                if let Some(button) = self.button {
+                    if event.event_type == UiEventType::Click && event.target == button {
+                        if let Some(input) = self.input {
+                            let storage = data.world.write_storage::<UiText>();
+                            let text = storage.get(input).unwrap();
+                            let port = text.text.clone();
+                            std::mem::drop(storage);
+                            data.world
+                                .insert(create_server_background_loop(port.parse().unwrap()));
+                            return Trans::Push(Box::new(ServerWait));
+                        }
+                    }
+                }
+                Trans::None
+            }
+            _ => Trans::None,
+        }
+    }
+
+    fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
+        let StateData { world, .. } = data;
+
+        if self.button.is_none() {
+            world.exec(|finder: UiFinder| {
+                self.button = finder.find("publish");
+            });
+        }
+
+        if self.input.is_none() {
+            world.exec(|finder: UiFinder| {
+                self.input = finder.find("port");
+            });
+        }
+
+        Trans::None
+    }
+}
 
 pub struct ServerWait;
 
@@ -12,7 +84,6 @@ impl SimpleState for ServerWait {
         world.exec(|mut creator: UiCreator<'_>| {
             creator.create("ui/server_wait.ron", ());
         });
-        world.insert(create_server_background_loop());
     }
 
     fn on_pause(&mut self, data: StateData<'_, GameData<'_, '_>>) {

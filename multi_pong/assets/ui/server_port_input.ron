@@ -31,7 +31,7 @@ Container(
                         stretch: XY( x_margin: 0., y_margin: 0., keep_aspect_ratio: false ),
                     ),
                     text: (
-                        text: "ENTER YOUR HOST:",
+                        text: "ENTER PORT:",
                         font: File("font/square.ttf", ("TTF", ())),
                         font_size: 20.,
                         color: (1.0, 1.0, 1.0, 1.0),
@@ -42,7 +42,7 @@ Container(
         ),
         Container(
             transform: (
-                id: "host_input_container",
+                id: "port_input_container",
                 x: 250.,
                 y: 250.,
                 width: 250.,
@@ -54,8 +54,8 @@ Container(
             children: [
                 Label(
                     transform: (
-                        id: "host_input",
-                        width: 400.,
+                        id: "port_input",
+                        width: 250.,
                         height: 25.,
                         tab_order: 1,
                         anchor: Middle,
@@ -70,7 +70,7 @@ Container(
                         color: (0.0, 0.0, 0.0, 1.0),
                         align: MiddleLeft,
                         editable: (
-                            max_length: 30,
+                            max_length: 15,
                             selected_text_color: (1.0, 1.0, 1.0, 1.0),
                             selected_background_color: (0.0, 0.0, 0.0, 1.0),
                             use_block_cursor: true,
@@ -81,7 +81,7 @@ Container(
         ),
         Button(
             transform: (
-                id: "connect",
+                id: "publish",
                 x: 250.,
                 y: -300.,
                 width: 200.,
@@ -91,7 +91,7 @@ Container(
                 mouse_reactive: true,
             ),
             button: (
-                text: "> Connect <",
+                text: "> Publish <",
                 font: File("font/square.ttf", ("TTF", ())),
                 font_size: 30.,
                 normal_text_color: (0.0, 0.0, 0.0, 1.0),

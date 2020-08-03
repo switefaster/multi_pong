@@ -1,17 +1,17 @@
+use crate::constants::{SCENE_HEIGHT, SCENE_WIDTH};
+use crate::network::{NetworkCommunication, Packet};
+use crate::systems::{Paddle, Role};
+use amethyst::core::ecs::{ReadStorage, World};
 use amethyst::{
     core::{
         shrev::{EventChannel, ReaderId},
-        SystemDesc,
         timing::Time,
         transform::Transform,
+        SystemDesc,
     },
     derive::SystemDesc,
     ecs::{Component, DenseVecStorage, Join, Read, System, SystemData, Write, WriteStorage},
 };
-use amethyst::core::ecs::{World, ReadStorage};
-use crate::network::{ResponseState, NetworkCommunication, Instruction, Packet};
-use crate::systems::{Paddle, Role};
-use crate::constants::{SCENE_HEIGHT, SCENE_WIDTH};
 
 pub struct Ball {
     pub velocity: [f32; 2],
@@ -28,20 +28,18 @@ pub struct SyncBallSystemDesc;
 impl<'a, 'b> SystemDesc<'a, 'b, SyncBallSystem> for SyncBallSystemDesc {
     fn build(self, world: &mut World) -> SyncBallSystem {
         <SyncBallSystem as System<'_>>::SystemData::setup(world);
-        let reader = world
-            .fetch_mut::<EventChannel<ResponseState>>()
-            .register_reader();
+        let reader = world.fetch_mut::<EventChannel<Packet>>().register_reader();
         SyncBallSystem::new(reader)
     }
 }
 
 pub struct SyncBallSystem {
-    reader: ReaderId<ResponseState>,
+    reader: ReaderId<Packet>,
     timer: f32,
 }
 
 impl SyncBallSystem {
-    fn new(reader: ReaderId<ResponseState>) -> Self {
+    fn new(reader: ReaderId<Packet>) -> Self {
         Self {
             reader,
             timer: 0.02,
@@ -53,27 +51,32 @@ impl<'a> System<'a> for SyncBallSystem {
     type SystemData = (
         Read<'a, Time>,
         Write<'a, NetworkCommunication>,
-        Read<'a, EventChannel<ResponseState>>,
+        Read<'a, EventChannel<Packet>>,
         WriteStorage<'a, Transform>,
         WriteStorage<'a, Ball>,
     );
 
-    fn run(&mut self, (time, mut comm, event_channel, mut transforms, mut balls): Self::SystemData) {
+    fn run(
+        &mut self,
+        (time, mut comm, event_channel, mut transforms, mut balls): Self::SystemData,
+    ) {
         self.timer -= time.delta_seconds();
         for (transform, ball) in (&mut transforms, &mut balls).join() {
             if comm.is_server() {
                 if self.timer <= 0.0 {
                     if let Some(ref mut sender) = comm.sender {
-                        sender.unbounded_send(Instruction::SendPacket(Packet::BallPosVel {
-                            position: [transform.translation().x, transform.translation().y],
-                            velocity: ball.velocity,
-                        })).unwrap();
+                        sender
+                            .unbounded_send(Packet::BallPosVel {
+                                position: [transform.translation().x, transform.translation().y],
+                                velocity: ball.velocity,
+                            })
+                            .unwrap();
                     }
                 }
             }
             if comm.is_client() {
                 for event in event_channel.read(&mut self.reader) {
-                    if let ResponseState::PacketReceived(Packet::BallPosVel {position, velocity}) = event {
+                    if let Packet::BallPosVel { position, velocity } = event {
                         transform.set_translation_xyz(SCENE_WIDTH - position[0], position[1], 0.0);
                         ball.velocity[0] = -velocity[0];
                         ball.velocity[1] = velocity[1];

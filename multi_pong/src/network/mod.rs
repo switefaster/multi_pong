@@ -1,18 +1,11 @@
-use futures::channel::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};
-use std::thread;
-use std::time::{Instant, Duration};
-use futures::{
-    select_biased,
-    future::FutureExt,
-    pin_mut,
-    sink::SinkExt
-};
-use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
-use tokio::time::delay_for;
-use tokio::stream::StreamExt;
-use tokio_util::codec::{FramedWrite, LengthDelimitedCodec, FramedRead};
-use tokio_serde::formats::SymmetricalMessagePack;
-use async_std::sync::TrySendError;
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use rand::Rng;
+use rudp::hand_shake::{client_connect, server_listen};
+use rudp::{start_udp_loop, BypassResult};
+use rudp_derive::PacketDesc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::time::{delay_for, Instant};
 
 pub enum Side {
     Server,
@@ -21,15 +14,15 @@ pub enum Side {
 
 #[derive(Default)]
 pub struct NetworkCommunication {
-    pub(crate) receiver: Option<UnboundedReceiver<ResponseState>>,
-    pub(crate) sender: Option<UnboundedSender<Instruction>>,
+    pub(crate) receiver: Option<UnboundedReceiver<Packet>>,
+    pub(crate) sender: Option<Arc<UnboundedSender<Packet>>>,
     side: Option<Side>,
 }
 
 impl NetworkCommunication {
     pub fn new(
-        receiver: UnboundedReceiver<ResponseState>,
-        sender: UnboundedSender<Instruction>,
+        receiver: UnboundedReceiver<Packet>,
+        sender: Arc<UnboundedSender<Packet>>,
         side: Side,
     ) -> Self {
         Self {
@@ -52,221 +45,76 @@ impl NetworkCommunication {
     }
 }
 
-pub enum DisconnectAction {
-    End,
-    WaitNew,
-}
-
-pub enum Instruction {
-    SendPacket(Packet),
-    Disconnect(DisconnectAction),
-}
-
-pub enum ResponseState {
-    ConnectionAbort,
-    PacketReceived(Packet),
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(PacketDesc, serde::Serialize, serde::Deserialize)]
 pub enum Packet {
+    #[packet(reliable)]
     Handshake {
         player_name: String,
     },
+    #[packet(ordered)]
     PaddleDisplace {
         position: f32,
     },
+    #[packet(ordered)]
     BallPosVel {
         position: [f32; 2],
         velocity: [f32; 2],
     },
-    Ping(i32),
-    Pong(i32),
+    Ping(u128),
+    Pong(u128),
 }
 
-pub fn create_server_background_loop() -> NetworkCommunication {
-    let (to_background, from_foreground) = unbounded();
-    let (to_foreground, from_background) = unbounded();
-    thread::spawn(move || {
-        server_network_loop(from_foreground, to_foreground);
-    });
-    NetworkCommunication::new(
-        from_background,
-        to_background,
-        Side::Server,
-    )
+const MAGIC: &[u8] = b"MULTI_PONG";
+lazy_static::lazy_static! {
+    pub static ref GLOBAL_PING: Mutex<u128> = Mutex::new(0);
+}
+lazy_static::lazy_static! {
+    static ref GLOBAL_TIMER: Instant = Instant::now();
 }
 
-pub fn create_client_background_loop<A: 'static + ToSocketAddrs + Send + Sync>(addr: A) -> NetworkCommunication {
-    let (to_background, from_foreground) = unbounded();
-    let (to_foreground, from_background) = unbounded();
-    thread::spawn(move || {
-        client_network_loop(addr, from_foreground, to_foreground);
-    });
-    NetworkCommunication::new(
-        from_background,
-        to_background,
-        Side::Client,
-    )
+fn bypass(p: Packet) -> BypassResult<Packet> {
+    match p {
+        Packet::Ping(i) => BypassResult::ToSender(Packet::Pong(i)),
+        Packet::Pong(i) => {
+            let now = GLOBAL_TIMER.elapsed();
+            *GLOBAL_PING.lock().unwrap() = now.as_millis() - i;
+            BypassResult::Discard
+        }
+        _ => BypassResult::ToUser(p),
+    }
 }
 
 #[tokio::main]
-async fn client_network_loop<A: ToSocketAddrs>(addr: A, mut from_foreground: UnboundedReceiver<Instruction>, mut to_foreground: UnboundedSender<ResponseState>) {
-    let mut socket = TcpStream::connect(addr).await.unwrap();
-    socket.set_nodelay(true).unwrap();
-    socket.set_ttl(128).unwrap();
-    let client = async move {
-        let (reader, writer) = socket.split();
-        let length_delimited_write =
-            FramedWrite::new(writer, LengthDelimitedCodec::new());
-        let mut serialized =
-            tokio_serde::SymmetricallyFramed::new(
-                length_delimited_write,
-                SymmetricalMessagePack::<Packet>::default(),
-            );
-        let length_delimited_read =
-            FramedRead::new(reader, LengthDelimitedCodec::new());
-        let mut deserialized =
-            tokio_serde::SymmetricallyFramed::new(
-                length_delimited_read,
-                SymmetricalMessagePack::<Packet>::default(),
-            );
-        let mut id = 0;
-        let mut now = Instant::now();
-        let mut pong_received = true;
-        loop {
-            if now.elapsed().as_secs() >= 1 {
-                if !pong_received {
-                    println!("ping took more than 1s");
-                }
-                pong_received = false;
-                now = Instant::now();
-                id += 1;
-                serialized.send(Packet::Ping(id)).await.unwrap();
-            }
-            let delay = delay_for(Duration::new(0, 10_000_000)).fuse();
-            let fg_to = from_foreground.next().fuse();
-            let to_fg = deserialized.next().fuse();
-            pin_mut!(delay, fg_to, to_fg);
-            select_biased! {
-                _ = delay => (),
-                inst = fg_to => {
-                    if let Some(inst) = inst {
-                        match inst {
-                            Instruction::Disconnect(_) => break,
-                            Instruction::SendPacket(packet) => {
-                                serialized.send(packet).await.unwrap();
-                            },
-                        }
-                    }
-                },
-                msg = to_fg => {
-                    if let Some(msg) = msg {
-                        match msg.unwrap() {
-                            Packet::Ping(packet_id) => serialized.send(Packet::Pong(packet_id)).await.unwrap(),
-                            Packet::Pong(packet_id) => if packet_id == id {
-                                println!("Ping: {}", now.elapsed().as_millis());
-                                pong_received = true;
-                            },
-                            others => to_foreground.send(ResponseState::PacketReceived(others)).await.unwrap()
-                        }
-                    }
-                },
-            };
-        }
-    };
-    client.await
-}
-
-#[tokio::main]
-async fn server_network_loop(mut from_foreground: UnboundedReceiver<Instruction>, mut to_foreground: UnboundedSender<ResponseState>) {
-    let mut listener = TcpListener::bind("0.0.0.0:4001").await.unwrap();
-    let (tx, rx) = async_std::sync::channel(1);
-    let server = async move {
-        let mut incoming = listener.incoming();
-        while let Some(conn) = incoming.next().await {
-            match conn {
-                Err(e) => println!("connection failed: {:?}", e),
-                Ok(sock) => {
-                    if let Err(e) = tx.try_send(sock) {
-                        match e {
-                            TrySendError::Full(_sock) => {
-                                //notify the connection
-                            },
-                            TrySendError::Disconnected(_sock) => {
-                                //notify the connection
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    };
+pub async fn create_server_background_loop(port: u16) -> NetworkCommunication {
+    let socket = server_listen(format!("0.0.0.0:{}", port).as_str(), MAGIC).await;
+    let timeout = Duration::new(0, 20_000_000);
+    let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
+    let ping_send = send.clone();
     tokio::spawn(async move {
-        'main: loop {
-            let mut socket = rx.recv().await.unwrap();
-            socket.set_nodelay(true).unwrap();
-            socket.set_ttl(128).unwrap();
-            let (reader, writer) = socket.split();
-            let length_delimited_write =
-                FramedWrite::new(writer, LengthDelimitedCodec::new());
-            let mut serialized =
-                tokio_serde::SymmetricallyFramed::new(
-                    length_delimited_write,
-                    SymmetricalMessagePack::<Packet>::default(),
-                );
-            let length_delimited_read =
-                FramedRead::new(reader, LengthDelimitedCodec::new());
-            let mut deserialized =
-                tokio_serde::SymmetricallyFramed::new(
-                    length_delimited_read,
-                    SymmetricalMessagePack::<Packet>::default(),
-                );
-            let mut id = 0;
-            let mut now = Instant::now();
-            let mut pong_received = true;
-            loop {
-                if now.elapsed().as_secs() >= 1 {
-                    if !pong_received {
-                        println!("ping took more than 1s");
-                    }
-                    pong_received = false;
-                    now = Instant::now();
-                    id += 1;
-                    serialized.send(Packet::Ping(id)).await.unwrap();
-                }
-                let delay = delay_for(Duration::new(0, 10_000_000)).fuse();
-                let fg_to = from_foreground.next().fuse();
-                let to_fg = deserialized.next().fuse();
-                pin_mut!(delay, fg_to, to_fg);
-                select_biased! {
-                    _ = delay => (),
-                    inst = fg_to => {
-                        if let Some(inst) = inst {
-                            match inst {
-                                Instruction::Disconnect(DisconnectAction::End) => break 'main,
-                                Instruction::Disconnect(DisconnectAction::WaitNew) => continue 'main,
-                                Instruction::SendPacket(packet) => {
-                                    serialized.send(packet).await.unwrap();
-                                },
-                            }
-                        }
-                    },
-                    msg = to_fg => {
-                        if let Some(msg) = msg {
-                            match msg.unwrap() {
-                                Packet::Ping(packet_id) => serialized.send(Packet::Pong(packet_id)).await.unwrap(),
-                                Packet::Pong(packet_id) => if packet_id == id {
-                                    println!("Ping: {}", now.elapsed().as_millis());
-                                    pong_received = true;
-                                },
-                                others => to_foreground.send(ResponseState::PacketReceived(others)).await.unwrap()
-                            }
-                        }
-                    },
-                };
-            }
+        loop {
+            ping_send
+                .unbounded_send(Packet::Ping(GLOBAL_TIMER.elapsed().as_millis()))
+                .unwrap();
+            delay_for(Duration::new(0, 100_000_000)).await;
         }
     });
-    server.await
+    NetworkCommunication::new(recv, send, Side::Server)
+}
+
+#[tokio::main]
+pub async fn create_client_background_loop(addr: &str) -> NetworkCommunication {
+    let port: u16 = rand::thread_rng().gen();
+    let socket = client_connect(format!("0.0.0.0:{}", port).as_str(), addr, MAGIC).await;
+    let timeout = Duration::new(0, 20_000_000);
+    let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
+    let ping_send = send.clone();
+    tokio::spawn(async move {
+        loop {
+            ping_send
+                .unbounded_send(Packet::Ping(GLOBAL_TIMER.elapsed().as_millis()))
+                .unwrap();
+            delay_for(Duration::new(0, 100_000_000)).await;
+        }
+    });
+    NetworkCommunication::new(recv, send, Side::Client)
 }
