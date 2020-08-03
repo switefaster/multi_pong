@@ -8,6 +8,7 @@ pub use mode_select::ModeSelect;
 pub use player_name::{PlayerName, PlayerNameResource};
 pub use client::ClientAddrInput;
 pub use server::ServerWait;
+pub use server::ServerPortInput;
 pub use in_game::InGame;
 
 pub enum CurrentState {

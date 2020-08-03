@@ -41,7 +41,7 @@ impl SimpleState for ModeSelect {
                     }
                     if let Some(button) = self.server_button {
                         if button == event.target {
-                            return Trans::Push(Box::new(super::ServerWait))
+                            return Trans::Push(Box::new(super::ServerPortInput::default()))
                         }
                     }
                 }
