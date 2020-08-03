@@ -1,5 +1,4 @@
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
-use rand::Rng;
 use rudp::hand_shake::{client_connect, server_listen};
 use rudp::{start_udp_loop, BypassResult};
 use rudp_derive::PacketDesc;
@@ -103,8 +102,7 @@ pub async fn create_server_background_loop(port: u16) -> NetworkCommunication {
 
 #[tokio::main]
 pub async fn create_client_background_loop(addr: &str) -> NetworkCommunication {
-    let port: u16 = rand::thread_rng().gen();
-    let socket = client_connect(format!("0.0.0.0:{}", port).as_str(), addr, MAGIC).await;
+    let socket = client_connect("0.0.0.0:0", addr, MAGIC).await;
     let timeout = Duration::new(0, 20_000_000);
     let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
     let ping_send = send.clone();

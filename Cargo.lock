@@ -2106,7 +2106,6 @@ dependencies = [
  "amethyst",
  "futures",
  "lazy_static",
- "rand 0.7.3",
  "rudp",
  "rudp_derive",
  "serde",
