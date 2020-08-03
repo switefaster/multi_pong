@@ -73,8 +73,8 @@ impl SimpleState for ServerPortInput {
         }
 
         if let Ok(mut network) = NETWORK.try_lock() {
-            if network.is_some() {
-                data.world.insert(network.take());
+            if let Some(network) = network.take() {
+                data.world.insert(network);
                 return Trans::Push(Box::new(ServerWait));
             }
         }
