@@ -1,3 +1,4 @@
+#![recursion_limit="256"]
 pub mod hand_shake;
 mod protocol;
 mod receiver;
@@ -6,7 +7,7 @@ mod sender;
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 pub use protocol::{DeserializeError, PacketDesc};
 pub use receiver::BypassResult;
-use receiver::{ack_loop, Receiver};
+use receiver::Receiver;
 use sender::Sender;
 use std::marker::{Send, Sync};
 use std::sync::Arc;
@@ -29,11 +30,10 @@ async fn udp_loop<
     let (ack_from, mut ack_to) = unbounded();
     let (recv, send) = socket.split();
     let mut sender = Sender::<T>::new(send, timeout, slot_capacity, max_retry);
-    let send_half = sender.get_send_half();
     let mut receiver = Receiver::new(recv, &sender);
     let send_task = tokio::spawn(async move {
         let mut from_fg = from_fg;
-        sender.send_loop(&mut from_fg).await;
+        sender.send_loop(&mut from_fg, &mut ack_to).await;
     });
     let recv_task = tokio::spawn(async move {
         let to_fg = to_fg;
@@ -48,14 +48,10 @@ async fn udp_loop<
             )
             .await;
     });
-    let ack_task = tokio::spawn(async move {
-        ack_loop(send_half, &mut ack_to).await;
-    });
     // Close the task when any finishes.
     select!(
         _ = send_task => (),
         _ = recv_task => (),
-        _ = ack_task => ()
     );
 }
 
