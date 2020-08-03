@@ -40,7 +40,9 @@ impl SimpleState for ServerPortInput {
             StateEvent::Ui(event) => {
                 if let Some(button) = self.button {
                     if event.event_type == UiEventType::Click && event.target == button {
+                        println!("click");
                         if let Some(input) = self.input {
+                            println!("click2");
                             let storage = data.world.write_storage::<UiText>();
                             let text = storage.get(input).unwrap();
                             let port = text.text.clone();

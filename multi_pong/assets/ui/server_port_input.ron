@@ -54,7 +54,7 @@ Container(
             children: [
                 Label(
                     transform: (
-                        id: "port_input",
+                        id: "port",
                         width: 250.,
                         height: 25.,
                         tab_order: 1,
