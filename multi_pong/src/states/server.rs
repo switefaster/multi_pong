@@ -40,14 +40,13 @@ impl SimpleState for ServerPortInput {
             StateEvent::Ui(event) => {
                 if let Some(button) = self.button {
                     if event.event_type == UiEventType::Click && event.target == button {
-                        println!("click");
                         if let Some(input) = self.input {
-                            println!("click2");
                             let storage = data.world.write_storage::<UiText>();
                             let text = storage.get(input).unwrap();
                             let port = text.text.clone();
                             std::mem::drop(storage);
                             init_server(port.parse().unwrap());
+                            return Trans::Push(Box::new(ServerWait));
                         }
                     }
                 }
@@ -72,12 +71,6 @@ impl SimpleState for ServerPortInput {
             });
         }
 
-        if let Ok(mut network) = NETWORK.try_lock() {
-            if let Some(network) = network.take() {
-                data.world.insert(network);
-                return Trans::Push(Box::new(ServerWait));
-            }
-        }
         Trans::None
     }
 }
@@ -101,6 +94,11 @@ impl SimpleState for ServerWait {
     }
 
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
+        if let Ok(mut network) = NETWORK.try_lock() {
+            if let Some(network) = network.take() {
+                data.world.insert(network);
+            }
+        }
         let state = data.world.read_resource::<CurrentState>();
         if let CurrentState::InGame = *state {
             Trans::Push(Box::new(super::InGame::default()))
