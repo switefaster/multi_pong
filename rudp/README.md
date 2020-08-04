@@ -1,12 +1,7 @@
 # RUDP
 
-> Tracking issue: https://github.com/switefaster/multi_pong/issues/5
->
-> Still very unstable, a lot of refactoring planned.
-
 Roughly UDP, a UDP wrapper layer with optional reliable ordered (but not
-sequenced) message transmission. Still WIP. Planned to be used by `multi_pong`
-to reduce network latency due to TCP.
+sequenced) message transmission.
 
 ## Example
 There is a `udp_remote` example in the examples directory.
