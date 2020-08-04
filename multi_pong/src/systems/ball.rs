@@ -10,7 +10,7 @@ use amethyst::{
         SystemDesc,
     },
     derive::SystemDesc,
-    ecs::{Component, DenseVecStorage, Join, Read, System, SystemData, Write, WriteStorage},
+    ecs::{Component, DenseVecStorage, Join, Read, System, SystemData, WriteStorage},
 };
 
 pub struct Ball {
@@ -50,21 +50,18 @@ impl SyncBallSystem {
 impl<'a> System<'a> for SyncBallSystem {
     type SystemData = (
         Read<'a, Time>,
-        Write<'a, NetworkCommunication>,
+        Read<'a, NetworkCommunication>,
         Read<'a, EventChannel<Packet>>,
         WriteStorage<'a, Transform>,
         WriteStorage<'a, Ball>,
     );
 
-    fn run(
-        &mut self,
-        (time, mut comm, event_channel, mut transforms, mut balls): Self::SystemData,
-    ) {
+    fn run(&mut self, (time, comm, event_channel, mut transforms, mut balls): Self::SystemData) {
         self.timer -= time.delta_seconds();
         for (transform, ball) in (&mut transforms, &mut balls).join() {
             if comm.is_server() {
                 if self.timer <= 0.0 {
-                    if let Some(ref mut sender) = comm.sender {
+                    if let Some(ref sender) = comm.sender {
                         sender
                             .unbounded_send(Packet::BallPosVel {
                                 position: [transform.translation().x, transform.translation().y],

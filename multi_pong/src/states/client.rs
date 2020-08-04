@@ -1,4 +1,4 @@
-use crate::network::{init_client, NETWORK, NetworkCommunication, Packet};
+use crate::network::{init_client, Packet, NETWORK};
 use crate::states::{CurrentState, PlayerNameResource};
 use amethyst::ecs::Entity;
 use amethyst::input::{is_close_requested, StringBindings};
@@ -46,6 +46,7 @@ impl SimpleState for ClientAddrInput {
                             let address = text.text.clone();
                             std::mem::drop(storage);
                             init_client(address);
+                            return Trans::Push(Box::new(ClientConnecting));
                         }
                     }
                 }
@@ -69,13 +70,6 @@ impl SimpleState for ClientAddrInput {
                 self.input = finder.find("host_input");
             });
         }
-
-        if let Ok(mut network) = NETWORK.try_lock() {
-            if let Some(network) = network.take() {
-                data.world.insert(network);
-                return Trans::Push(Box::new(ClientConnecting));
-            }
-        }
         Trans::None
     }
 }
@@ -88,15 +82,6 @@ impl SimpleState for ClientConnecting {
         world.exec(|mut creator: UiCreator<'_>| {
             creator.create("ui/connecting.ron", ());
         });
-        let mut comm = world.write_resource::<NetworkCommunication>();
-        let name = world.read_resource::<PlayerNameResource>();
-        if let Some(ref mut sender) = comm.sender {
-            sender
-                .unbounded_send(Packet::Handshake {
-                    player_name: name.my_name.clone().unwrap(),
-                })
-                .unwrap();
-        }
     }
 
     fn on_pause(&mut self, data: StateData<'_, GameData<'_, '_>>) {
@@ -104,11 +89,26 @@ impl SimpleState for ClientConnecting {
     }
 
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
+        if let Ok(mut network) = NETWORK.try_lock() {
+            if let Some(network) = network.take() {
+                let name = data.world.read_resource::<PlayerNameResource>();
+                if let Some(ref sender) = network.sender {
+                    sender
+                        .unbounded_send(Packet::Handshake {
+                            player_name: name.my_name.clone().unwrap(),
+                        })
+                        .unwrap();
+                    println!("Handshake packet sent!");
+                }
+                std::mem::drop(name);
+                data.world.insert(network);
+            }
+        }
         let state = data.world.read_resource::<CurrentState>();
         if let CurrentState::InGame = *state {
-            Trans::Push(Box::new(super::InGame::default()))
+            return Trans::Push(Box::new(super::InGame::default()));
         } else {
-            Trans::None
+            return Trans::None;
         }
     }
 }

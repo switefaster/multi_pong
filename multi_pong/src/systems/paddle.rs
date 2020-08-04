@@ -9,10 +9,7 @@ use amethyst::{
         transform::Transform,
         SystemDesc,
     },
-    ecs::{
-        Component, DenseVecStorage, Join, Read, ReadStorage, System, SystemData, Write,
-        WriteStorage,
-    },
+    ecs::{Component, DenseVecStorage, Join, Read, ReadStorage, System, SystemData, WriteStorage},
     input::{InputHandler, StringBindings},
 };
 
@@ -40,7 +37,7 @@ impl PaddleSystem {
 impl<'a> System<'a> for PaddleSystem {
     type SystemData = (
         Read<'a, Time>,
-        Write<'a, NetworkCommunication>,
+        Read<'a, NetworkCommunication>,
         Read<'a, InputHandler<StringBindings>>,
         Read<'a, EventChannel<Packet>>,
         WriteStorage<'a, Transform>,
@@ -49,7 +46,7 @@ impl<'a> System<'a> for PaddleSystem {
 
     fn run(
         &mut self,
-        (time, mut comm, input, event_channel, mut transforms, paddles): Self::SystemData,
+        (time, comm, input, event_channel, mut transforms, paddles): Self::SystemData,
     ) {
         for (transform, paddle) in (&mut transforms, &paddles).join() {
             match paddle.role {
@@ -62,7 +59,7 @@ impl<'a> System<'a> for PaddleSystem {
                             .min(SCENE_HEIGHT - PADDLE_HEIGHT * 0.5)
                             .max(PADDLE_HEIGHT * 0.5);
                         transform.set_translation_y(position);
-                        if let Some(ref mut sender) = comm.sender {
+                        if let Some(ref sender) = comm.sender {
                             sender
                                 .unbounded_send(Packet::PaddleDisplace { position })
                                 .unwrap();
