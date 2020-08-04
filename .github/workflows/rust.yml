@@ -14,7 +14,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, ubuntu-latest]
 
     steps:
     - uses: actions/checkout@v2
@@ -25,13 +25,16 @@ jobs:
           ~/.cargo/git
           target
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install dependencies for Ubuntu
+      if: matrix.os == 'ubuntu-latest'
+      run: sudo apt-get update && sudo apt-get install gcc pkg-config openssl libasound2-dev cmake build-essential python3 libfreetype6-dev libexpat1-dev libxcb-composite0-dev libssl-dev libx11-dev
     - name: Install latest nightly toolchain
       uses: actions-rs/toolchain@v1
       with:
         toolchain: nightly
         override: true
     - name: Build
-      run: cargo build --verbose -Z unstable-options --out-dir artifacts
+      run: cargo build --release --verbose -Z unstable-options --out-dir artifacts
     - name: Run tests
       run: cargo test --verbose
     - name: Upload artifacts
