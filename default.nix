@@ -11,7 +11,7 @@ rustPlatform.buildRustPackage rec {
   pname = "multi_pong";
   version = "0.1.0";
   src = ./.;
-  cargoSha256 = "1wnzf6cx9mz97big7d724g2h8xlg5xaxflddsxzicfca4yr9qqni";
+  cargoSha256 = "08mm787h9ria9cbxa9yshfna623vqwv6qmvzy8a51bzd3sxidv34";
   nativeBuildInputs = (
     with pkgs; [
       alsaLib
