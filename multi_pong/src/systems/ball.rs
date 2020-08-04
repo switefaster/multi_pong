@@ -15,6 +15,7 @@ use amethyst::{
 
 pub struct Ball {
     pub velocity: [f32; 2],
+    pub omega: f32,
     pub radius: f32,
 }
 
@@ -101,6 +102,7 @@ impl<'a> System<'a> for MoveBallSystem {
         for (ball, transforms) in (&balls, &mut transforms).join() {
             transforms.prepend_translation_x(ball.velocity[0] * time.delta_seconds());
             transforms.prepend_translation_y(ball.velocity[1] * time.delta_seconds());
+            transforms.rotate_2d(ball.omega * time.delta_seconds());
         }
     }
 }

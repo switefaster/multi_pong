@@ -1,16 +1,16 @@
 use futures::{
+    channel::mpsc::{UnboundedReceiver, UnboundedSender},
     future::FutureExt,
-    select, pin_mut,
-    channel::mpsc::{UnboundedReceiver, UnboundedSender}
+    pin_mut, select,
 };
 use rudp::hand_shake::{client_connect, server_listen};
 use rudp::{start_udp_loop, BypassResult};
 use rudp_derive::PacketDesc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use std::thread;
-use tokio::time::{delay_for, Instant};
+use std::time::Duration;
 use tokio::sync::Notify;
+use tokio::time::{delay_for, Instant};
 
 pub enum Side {
     Server,
@@ -112,7 +112,8 @@ async fn create_server_background_loop(port: u16) {
                 .unwrap();
             delay_for(Duration::new(0, 100_000_000)).await;
         }
-    }.fuse();
+    }
+    .fuse();
     let notify = BG_TERMINATE.notified().fuse();
     pin_mut!(f, notify);
     select! {
@@ -140,7 +141,8 @@ async fn create_client_background_loop(addr: &str) {
                 .unwrap();
             delay_for(Duration::new(0, 100_000_000)).await;
         }
-    }.fuse();
+    }
+    .fuse();
     let notify = BG_TERMINATE.notified().fuse();
     pin_mut!(f, notify);
     select! {
@@ -164,4 +166,3 @@ pub fn init_client(addr: String) {
         println!("End client");
     });
 }
-

@@ -1,17 +1,17 @@
+use crate::constants::{
+    BALL_ANGULAR_SPEED, BALL_RADIUS, BALL_VELOCITY_X, BALL_VELOCITY_Y, PADDLE_WIDTH, SCENE_HEIGHT,
+    SCENE_WIDTH,
+};
+use crate::network::NetworkCommunication;
+use crate::states::{CurrentState, PlayerNameResource};
+use crate::systems::{Ball, Paddle, Role};
 use amethyst::{
-    assets::{AssetStorage, Loader, Handle},
-    core::{
-        timing::Time,
-        transform::Transform,
-    },
+    assets::{AssetStorage, Handle, Loader},
+    core::{timing::Time, transform::Transform},
     prelude::*,
     renderer::{Camera, ImageFormat, SpriteRender, SpriteSheet, SpriteSheetFormat, Texture},
     ui::{Anchor, TtfFormat, UiText, UiTransform},
 };
-use crate::states::{CurrentState, PlayerNameResource};
-use crate::constants::{SCENE_WIDTH, SCENE_HEIGHT, PADDLE_WIDTH, BALL_VELOCITY_X, BALL_VELOCITY_Y, BALL_RADIUS};
-use crate::systems::{Paddle, Role, Ball};
-use crate::network::NetworkCommunication;
 
 #[derive(Default)]
 pub struct InGame {
@@ -22,7 +22,8 @@ pub struct InGame {
 impl SimpleState for InGame {
     fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
         self.ball_spawn_timer.replace(5.0);
-        self.sprite_sheet_handle.replace(load_sprite_sheet(data.world));
+        self.sprite_sheet_handle
+            .replace(load_sprite_sheet(data.world));
 
         setup_camera(data.world);
         setup_paddles(data.world, self.sprite_sheet_handle.clone().unwrap());
@@ -109,6 +110,7 @@ fn setup_ball(world: &mut World, sprite_sheet_handle: Handle<SpriteSheet>) {
             .with(Ball {
                 velocity: [BALL_VELOCITY_X, BALL_VELOCITY_Y],
                 radius: BALL_RADIUS,
+                omega: BALL_ANGULAR_SPEED,
             })
             .build();
     } else if !is_server {
@@ -119,14 +121,13 @@ fn setup_ball(world: &mut World, sprite_sheet_handle: Handle<SpriteSheet>) {
             .with(Ball {
                 velocity: [-BALL_VELOCITY_X, BALL_VELOCITY_Y],
                 radius: BALL_RADIUS,
+                omega: BALL_ANGULAR_SPEED,
             })
             .build();
     }
 }
 
-fn setup_score() {
-
-}
+fn setup_score() {}
 
 fn setup_name_tag(world: &mut World) {
     let name_resource = (*world.read_resource::<PlayerNameResource>()).clone();
