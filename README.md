@@ -11,5 +11,3 @@ Cargo workspace for the game `multi_pong`.
 ## Development
 Please refer to the environment setup guide of `Amethyst`.
 
-For [Nix](https://nixos.org/) users, you can use `nix-shell` to setup the
-development environment, and `nix-build` to build the package.
