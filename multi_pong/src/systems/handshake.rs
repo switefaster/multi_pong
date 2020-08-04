@@ -49,7 +49,6 @@ impl<'a> System<'a> for HandshakeSystem {
                                 player_name: name.my_name.clone().unwrap(),
                             })
                             .unwrap();
-                        println!("Handshake packet responded!")
                     }
                     name.rival_name = Some(player_name.clone());
                     *state = CurrentState::InGame;

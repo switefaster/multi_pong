@@ -98,7 +98,6 @@ impl SimpleState for ClientConnecting {
                             player_name: name.my_name.clone().unwrap(),
                         })
                         .unwrap();
-                    println!("Handshake packet sent!");
                 }
                 std::mem::drop(name);
                 data.world.insert(network);

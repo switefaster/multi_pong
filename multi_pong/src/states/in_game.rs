@@ -2,16 +2,24 @@ use crate::constants::{
     BALL_ANGULAR_SPEED, BALL_RADIUS, BALL_VELOCITY_X, BALL_VELOCITY_Y, PADDLE_WIDTH, SCENE_HEIGHT,
     SCENE_WIDTH,
 };
-use crate::network::NetworkCommunication;
+use crate::network::{NetworkCommunication, GLOBAL_PING};
 use crate::states::{CurrentState, PlayerNameResource};
 use crate::systems::{Ball, Paddle, Role};
 use amethyst::{
     assets::{AssetStorage, Handle, Loader},
     core::{timing::Time, transform::Transform},
+    ecs::Entity,
     prelude::*,
     renderer::{Camera, ImageFormat, SpriteRender, SpriteSheet, SpriteSheetFormat, Texture},
     ui::{Anchor, TtfFormat, UiText, UiTransform},
 };
+
+#[derive(Default)]
+pub struct UpdatableUI {
+    own_score: Option<Entity>,
+    hostile_score: Option<Entity>,
+    ping: Option<Entity>,
+}
 
 #[derive(Default)]
 pub struct InGame {
@@ -44,6 +52,17 @@ impl SimpleState for InGame {
                 setup_ball(data.world, self.sprite_sheet_handle.clone().unwrap());
             } else {
                 self.ball_spawn_timer.replace(timer);
+            }
+        }
+        let ui = data.world.read_resource::<UpdatableUI>();
+        if let Some(ping) = ui.ping {
+            std::mem::drop(ui);
+            let mut storage = data.world.write_storage::<UiText>();
+            if let Some(text) = storage.get_mut(ping) {
+                // try_lock() because we don't want the game thread get blocked
+                if let Ok(ping) = GLOBAL_PING.try_lock() {
+                    text.text = format!("{}ms", *ping);
+                }
             }
         }
         Trans::None
@@ -157,6 +176,16 @@ fn setup_name_tag(world: &mut World) {
         150.0,
         20.0,
     );
+    let ping_transform = UiTransform::new(
+        "ping".to_string(),
+        Anchor::BottomRight,
+        Anchor::BottomRight,
+        0.0,
+        0.0,
+        1.0,
+        150.0,
+        20.0,
+    );
 
     world
         .create_entity()
@@ -173,12 +202,29 @@ fn setup_name_tag(world: &mut World) {
         .create_entity()
         .with(hostile_transform)
         .with(UiText::new(
-            font,
+            font.clone(),
             name_resource.rival_name.unwrap(),
             [1.0, 1.0, 1.0, 1.0],
             20.0,
         ))
         .build();
+
+    let ping = world
+        .create_entity()
+        .with(ping_transform)
+        .with(UiText::new(
+            font,
+            "0ms".to_string(),
+            [1.0, 1.0, 1.0, 1.0],
+            20.0,
+        ))
+        .build();
+
+    world.insert(UpdatableUI {
+        own_score: None,
+        hostile_score: None,
+        ping: Some(ping),
+    });
 }
 
 fn load_sprite_sheet(world: &mut World) -> Handle<SpriteSheet> {
