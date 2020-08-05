@@ -36,8 +36,10 @@ jobs:
     - name: Build
       run: cargo build --release --verbose -Z unstable-options --out-dir artifacts
     - name: Copy Assets and Config(Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
       run: cp ${{ github.workspace }}/multi_pong/assets ${{ github.workspace }}/artifacts ; cp ${{ github.workspace }}/multi_pong/config ${{ github.workspace }}/artifacts
     - name: Copy Assets and Config(Windows)
+      if: matrix.os == 'windows-latest'
       run: copy ${{ github.workspace }}/multi_pong/assets ${{ github.workspace }}/artifacts & copy ${{ github.workspace }}/multi_pong/config ${{ github.workspace }}/artifacts
     - name: Run tests
       run: cargo test --verbose
