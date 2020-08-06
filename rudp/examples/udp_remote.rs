@@ -113,7 +113,7 @@ async fn main() {
                 }
                 Some(Packet::Pong(reliable, id, timestamp)) => {
                     let time = start.elapsed().as_micros() - timestamp;
-                    mean = mean * count as f64 - window[(index + 1) % WINDOW_SIZE] as f64
+                    mean = mean * count as f64 - window[index] as f64
                         + time as f64;
                     window[index] = time;
                     index = (index + 1) % WINDOW_SIZE;
