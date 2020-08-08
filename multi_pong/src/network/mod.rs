@@ -59,6 +59,7 @@ pub enum Packet {
     #[packet(ordered)]
     PaddleDisplace {
         position: f32,
+        rotation: f32,
     },
     #[packet(ordered)]
     BallPosVel {
