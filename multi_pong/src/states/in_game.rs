@@ -3,6 +3,7 @@ use crate::constants::{
     SCENE_WIDTH,
 };
 use crate::network::{NetworkCommunication, GLOBAL_PING};
+use crate::render::InvColorTriangle;
 use crate::states::{CurrentState, PlayerNameResource};
 use crate::systems::{Ball, Paddle, Role};
 use amethyst::{
@@ -33,6 +34,13 @@ impl SimpleState for InGame {
         self.sprite_sheet_handle
             .replace(load_sprite_sheet(data.world));
 
+        data.world
+            .create_entity()
+            .with(InvColorTriangle {
+                points: [[1.0, 1.0], [1.0, -1.0], [0.0, -1.0]],
+            })
+            .build();
+
         setup_camera(data.world);
         setup_paddles(data.world, self.sprite_sheet_handle.clone().unwrap());
         setup_name_tag(data.world);
@@ -61,7 +69,7 @@ impl SimpleState for InGame {
             if let Some(text) = storage.get_mut(ping) {
                 // try_lock() because we don't want the game thread get blocked
                 if let Ok(ping) = GLOBAL_PING.try_lock() {
-                    text.text = format!("{}ms", *ping);
+                    text.text = format!("{} ms", *ping);
                 }
             }
         }

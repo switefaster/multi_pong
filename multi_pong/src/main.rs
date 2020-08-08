@@ -1,9 +1,11 @@
 #![recursion_limit = "256"]
 mod constants;
 mod network;
+mod render;
 mod states;
 mod systems;
 
+use crate::render::RenderInvColor;
 use crate::systems::MultiPongBundle;
 use amethyst::{
     core::{frame_limiter::FrameRateLimitStrategy, TransformBundle},
@@ -37,7 +39,8 @@ fn main() -> amethyst::Result<()> {
                         .with_clear([0.0, 0.0, 0.0, 1.0]),
                 )
                 .with_plugin(RenderFlat2D::default())
-                .with_plugin(RenderUi::default()),
+                .with_plugin(RenderUi::default())
+                .with_plugin(RenderInvColor::default()),
         )?
         .with_bundle(TransformBundle::new())?
         .with_bundle(input_bundle)?

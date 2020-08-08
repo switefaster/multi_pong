@@ -5,7 +5,7 @@ authors = ["switefaster <switefaster@gmail.com>", "pca006132 <john.lck40@gmail.c
 edition = "2018"
 
 [dependencies]
-amethyst = "0.15.0"
+amethyst = { version = "0.15.0", features = ["shader-compiler"] }
 tokio = { version = "0.2", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11.1"
@@ -13,6 +13,9 @@ futures = "0.3"
 rudp = { path = "../rudp" }
 rudp_derive = { path = "../rudp_derive" }
 lazy_static = "1.4.0"
+derivative = "2.1.1"
+glsl-layout = "0.3.2"
+failure = "0.1.8"
 
 [features]
 default = ["vulkan"]
