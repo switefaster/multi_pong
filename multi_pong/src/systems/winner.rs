@@ -1,11 +1,11 @@
+use crate::constants::SCENE_WIDTH;
+use crate::network::NetworkCommunication;
+use crate::systems::Ball;
 use amethyst::{
     core::transform::Transform,
     derive::SystemDesc,
-    ecs::prelude::{Join, System, SystemData, WriteStorage, Read},
+    ecs::prelude::{Join, Read, System, SystemData, WriteStorage},
 };
-use crate::systems::Ball;
-use crate::constants::SCENE_WIDTH;
-use crate::network::NetworkCommunication;
 
 #[derive(SystemDesc)]
 pub struct WinnerSystem;
@@ -22,9 +22,9 @@ impl<'s> System<'s> for WinnerSystem {
             for (ball, transform) in (&mut balls, &mut locals).join() {
                 let ball_x = transform.translation().x;
 
-                let did_hit = if ball_x <= ball.radius {
+                let did_hit = if ball_x <= -ball.radius {
                     true
-                } else if ball_x >= SCENE_WIDTH - ball.radius {
+                } else if ball_x >= SCENE_WIDTH + ball.radius {
                     true
                 } else {
                     false

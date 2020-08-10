@@ -9,7 +9,7 @@ use amethyst::{
         transform::Transform,
         SystemDesc,
     },
-    ecs::{Component, DenseVecStorage, Join, Read, ReadStorage, System, SystemData, WriteStorage},
+    ecs::{Component, DenseVecStorage, Join, Read, System, SystemData, WriteStorage},
     input::{InputHandler, StringBindings},
 };
 
@@ -41,14 +41,14 @@ impl<'a> System<'a> for PaddleSystem {
         Read<'a, InputHandler<StringBindings>>,
         Read<'a, EventChannel<Packet>>,
         WriteStorage<'a, Transform>,
-        ReadStorage<'a, Paddle>,
+        WriteStorage<'a, Paddle>,
     );
 
     fn run(
         &mut self,
-        (time, comm, input, event_channel, mut transforms, paddles): Self::SystemData,
+        (time, comm, input, event_channel, mut transforms, mut paddles): Self::SystemData,
     ) {
-        for (transform, paddle) in (&mut transforms, &paddles).join() {
+        for (transform, paddle) in (&mut transforms, &mut paddles).join() {
             match paddle.role {
                 Role::Own => {
                     let movement = input.axis_value("paddle");
@@ -72,6 +72,7 @@ impl<'a> System<'a> for PaddleSystem {
                             }
                         };
                         transform.set_rotation_2d(-rotation);
+                        paddle.rotation = -rotation;
                         if let Some(ref sender) = comm.sender {
                             sender
                                 .unbounded_send(Packet::PaddleDisplace { position, rotation })
@@ -88,6 +89,7 @@ impl<'a> System<'a> for PaddleSystem {
                                     .max(PADDLE_HEIGHT * 0.5),
                             );
                             transform.set_rotation_2d(*rotation);
+                            paddle.rotation = *rotation;
                         }
                     }
                 }

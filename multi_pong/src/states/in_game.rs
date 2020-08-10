@@ -3,7 +3,6 @@ use crate::constants::{
     SCENE_WIDTH,
 };
 use crate::network::{NetworkCommunication, GLOBAL_PING};
-use crate::render::InvColorTriangle;
 use crate::states::{CurrentState, PlayerNameResource};
 use crate::systems::{Ball, Paddle, Role};
 use amethyst::{
@@ -33,13 +32,6 @@ impl SimpleState for InGame {
         self.ball_spawn_timer.replace(5.0);
         self.sprite_sheet_handle
             .replace(load_sprite_sheet(data.world));
-
-        data.world
-            .create_entity()
-            .with(InvColorTriangle {
-                points: [[1.0, 1.0], [1.0, -1.0], [0.0, -1.0]],
-            })
-            .build();
 
         setup_camera(data.world);
         setup_paddles(data.world, self.sprite_sheet_handle.clone().unwrap());
