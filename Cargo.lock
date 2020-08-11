@@ -3330,8 +3330,12 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "futures",
+ "lazy_static",
  "log",
  "rand 0.7.3",
+ "rudp_derive",
+ "serde",
+ "serde_cbor",
  "tokio",
 ]
 
