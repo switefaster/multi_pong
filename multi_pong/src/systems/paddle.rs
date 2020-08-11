@@ -10,7 +10,7 @@ use amethyst::{
         transform::Transform,
         SystemDesc,
     },
-    ecs::{Component, DenseVecStorage, Join, Read, System, SystemData, WriteStorage},
+    ecs::{Component, DenseVecStorage, Join, Read, ReadExpect, System, SystemData, WriteStorage},
     input::{InputHandler, StringBindings},
 };
 
@@ -41,7 +41,7 @@ impl<'a> System<'a> for PaddleSystem {
         Read<'a, NetworkCommunication>,
         Read<'a, InputHandler<StringBindings>>,
         Read<'a, EventChannel<Packet>>,
-        Read<'a, ScreenDimensions>,
+        ReadExpect<'a, ScreenDimensions>,
         WriteStorage<'a, Transform>,
         WriteStorage<'a, Paddle>,
     );
