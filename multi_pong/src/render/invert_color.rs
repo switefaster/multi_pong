@@ -101,9 +101,9 @@ impl<B: Backend> RenderGroup<B, World> for DrawInvertColor<B> {
     ) -> PrepareResult {
         let (triangles,) = <(ReadStorage<'_, InvColorTriangle>,)>::fetch(aux);
         let old_vertex_count = self.vertex_count;
-        self.vertex_count = triangles.join().count() * 3;
+        self.vertex_count = (&triangles).join().count() * 3;
         let changed = old_vertex_count != self.vertex_count;
-        let vertex_data_iter = triangles.join().flat_map(|triangle| triangle.get_args());
+        let vertex_data_iter = (&triangles).join().flat_map(|triangle| triangle.get_args());
         self.vertex.write(
             factory,
             index,
