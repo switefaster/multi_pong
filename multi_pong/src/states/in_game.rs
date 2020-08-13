@@ -2,7 +2,7 @@ use crate::constants::{
     BALL_ANGULAR_SPEED, BALL_RADIUS, BALL_VELOCITY_X, BALL_VELOCITY_Y, PADDLE_WIDTH, SCENE_HEIGHT,
     SCENE_WIDTH,
 };
-use crate::network::{NetworkCommunication, GLOBAL_PING};
+use crate::network::{NetworkCommunication, STATE};
 use crate::states::{CurrentState, PlayerNameResource};
 use crate::systems::{Ball, Paddle, Role};
 use amethyst::{
@@ -60,8 +60,13 @@ impl SimpleState for InGame {
             let mut storage = data.world.write_storage::<UiText>();
             if let Some(text) = storage.get_mut(ping) {
                 // try_lock() because we don't want the game thread get blocked
-                if let Ok(ping) = GLOBAL_PING.try_lock() {
-                    text.text = format!("{} ms", *ping);
+                if let Ok(state) = STATE.try_lock() {
+                    let index = if state.index < state.latency.len() {
+                        state.index
+                    } else {
+                        state.latency.len() - 1
+                    };
+                    text.text = format!("{} ms", (state.latency[index] as f32 * 0.001) as i128);
                 }
             }
         }

@@ -53,37 +53,100 @@ impl NetworkCommunication {
 #[derive(PacketDesc, serde::Serialize, serde::Deserialize)]
 pub enum Packet {
     #[packet(reliable)]
-    Handshake {
-        player_name: String,
-    },
+    Handshake { player_name: String },
     #[packet(ordered)]
-    PaddleDisplace {
-        position: f32,
-        rotation: f32,
-    },
+    PaddleDisplace { position: f32, rotation: f32 },
     #[packet(ordered)]
     BallPosVel {
         position: [f32; 2],
         velocity: [f32; 2],
     },
-    Ping(u128),
-    Pong(u128),
+    #[packet(ordered)]
+    Ping {
+        client_time: i128,
+        expected_arrival: i128,
+    },
+    #[packet(ordered)]
+    Pong {
+        client_time: i128,
+        remote_time: i128,
+    },
+}
+
+pub struct State {
+    pub start_time: Instant,
+    // timer offset from remote to local, in microsecond
+    pub time_offset: [i128; 16],
+    // decided offset
+    pub qin_ding_offset: i128,
+    // one way latency, in microsecond
+    pub latency: [i128; 16],
+    // current index
+    pub index: usize,
+    // actual offset from client in microsecond
+    pub actual_offset: i128,
 }
 
 const MAGIC: &[u8] = b"MULTI_PONG";
 lazy_static::lazy_static! {
-    pub static ref GLOBAL_PING: Mutex<u128> = Mutex::new(0);
+    pub static ref STATE: Mutex<State> = Mutex::new(State {
+        start_time: Instant::now(),
+        time_offset: [0; 16],
+        latency: [0; 16],
+        qin_ding_offset: 0,
+        index: 0,
+        actual_offset: 0
+    });
     pub static ref NETWORK: Mutex<Option<NetworkCommunication>> = Mutex::new(None);
-    static ref GLOBAL_TIMER: Instant = Instant::now();
     static ref BG_TERMINATE: Notify = Notify::new();
 }
 
 fn bypass(p: Packet) -> BypassResult<Packet> {
     match p {
-        Packet::Ping(i) => BypassResult::ToSender(Packet::Pong(i)),
-        Packet::Pong(i) => {
-            let now = GLOBAL_TIMER.elapsed();
-            *GLOBAL_PING.lock().unwrap() = now.as_millis() - i;
+        Packet::Ping {
+            client_time,
+            expected_arrival,
+        } => {
+            let mut lock = STATE.lock();
+            let state = lock.as_mut().unwrap();
+            let remote_time = state.start_time.elapsed().as_micros() as i128;
+            let actual_offset = expected_arrival - remote_time;
+            state.actual_offset = actual_offset;
+            BypassResult::ToSender(Packet::Pong {
+                client_time,
+                remote_time,
+            })
+        }
+        Packet::Pong {
+            client_time,
+            remote_time,
+        } => {
+            let mut lock = STATE.lock();
+            let state = lock.as_mut().unwrap();
+            let now = state.start_time.elapsed().as_micros() as i128;
+            let raw_latency = (now - client_time) / 2;
+            let raw_offset = (remote_time - client_time) - raw_latency;
+
+            let index = state.index;
+            if index < state.latency.len() {
+                state.latency[index] = raw_latency;
+                state.time_offset[index] = raw_offset;
+                state.index += 1;
+                if index == state.latency.len() - 1 {
+                    let &offset = state
+                        .latency
+                        .iter()
+                        .zip(state.time_offset.iter())
+                        .min_by_key(|v| v.0)
+                        .unwrap()
+                        .1;
+                    state.qin_ding_offset = offset;
+                }
+            } else {
+                let index = state.latency.len() - 1;
+                state.latency[index] = raw_latency;
+                state.time_offset[index] = raw_offset;
+            }
             BypassResult::Discard
         }
         _ => BypassResult::ToUser(p),
@@ -107,11 +170,33 @@ async fn create_server_background_loop(port: u16) {
         let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
         let ping_send = send.clone();
         *NETWORK.lock().unwrap() = Some(NetworkCommunication::new(recv, send, Side::Server));
+        let interval = Duration::new(0, 100_000_000);
         loop {
-            ping_send
-                .unbounded_send(Packet::Ping(GLOBAL_TIMER.elapsed().as_millis()))
-                .unwrap();
-            delay_for(Duration::new(0, 100_000_000)).await;
+            delay_for(interval).await;
+            let (start, offset, latency, _) = {
+                let lock = STATE.lock();
+                let state = lock.as_ref().unwrap();
+                let index = if state.index < state.latency.len() {
+                    state.index
+                } else {
+                    state.latency.len() - 1
+                };
+                (
+                    state.start_time,
+                    state.qin_ding_offset,
+                    state.latency[index],
+                    state.actual_offset,
+                )
+            };
+            let client_time = start.elapsed().as_micros() as i128;
+            let expected_arrival = client_time + offset + latency;
+            let packet = Packet::Ping {
+                client_time,
+                expected_arrival,
+            };
+            if ping_send.unbounded_send(packet).is_err() {
+                return;
+            }
         }
     }
     .fuse();
@@ -136,11 +221,33 @@ async fn create_client_background_loop(addr: &str) {
         let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
         let ping_send = send.clone();
         *NETWORK.lock().unwrap() = Some(NetworkCommunication::new(recv, send, Side::Client));
+        let interval = Duration::new(0, 100_000_000);
         loop {
-            ping_send
-                .unbounded_send(Packet::Ping(GLOBAL_TIMER.elapsed().as_millis()))
-                .unwrap();
-            delay_for(Duration::new(0, 100_000_000)).await;
+            delay_for(interval).await;
+            let (start, offset, latency, _) = {
+                let lock = STATE.lock();
+                let state = lock.as_ref().unwrap();
+                let index = if state.index < state.latency.len() {
+                    state.index
+                } else {
+                    state.latency.len() - 1
+                };
+                (
+                    state.start_time,
+                    state.qin_ding_offset,
+                    state.latency[index],
+                    state.actual_offset,
+                )
+            };
+            let client_time = start.elapsed().as_micros() as i128;
+            let expected_arrival = client_time + offset + latency;
+            let packet = Packet::Ping {
+                client_time,
+                expected_arrival,
+            };
+            if ping_send.unbounded_send(packet).is_err() {
+                return;
+            }
         }
     }
     .fuse();
