@@ -101,7 +101,7 @@ impl SimpleState for ClientConnecting {
                 }
                 std::mem::drop(name);
                 data.world.insert(network);
-                data.world.insert(start_time);
+                data.world.insert(Some(start_time));
             }
         }
         let state = data.world.read_resource::<CurrentState>();

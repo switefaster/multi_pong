@@ -1,6 +1,7 @@
 use crate::constants::{SCENE_HEIGHT, SCENE_WIDTH};
 use crate::network::{NetworkCommunication, Packet};
 use crate::systems::{Paddle, Role};
+use tokio::time::Instant;
 use amethyst::core::ecs::{ReadStorage, World};
 use amethyst::{
     core::{
@@ -53,18 +54,25 @@ impl<'a> System<'a> for SyncBallSystem {
         Read<'a, Time>,
         Read<'a, NetworkCommunication>,
         Read<'a, EventChannel<Packet>>,
+        Read<'a, Option<Instant>>,
         WriteStorage<'a, Transform>,
         WriteStorage<'a, Ball>,
     );
 
-    fn run(&mut self, (time, comm, event_channel, mut transforms, mut balls): Self::SystemData) {
+    fn run(&mut self, (time, comm, event_channel, start_time, mut transforms, mut balls): Self::SystemData) {
         self.timer -= time.delta_seconds();
         for (transform, ball) in (&mut transforms, &mut balls).join() {
+            // start_time should be present when this is run
+            // TODO: interchange server and client role after collision with paddle,
+            // and add generation for the messages to prevent confusion.
+            let start_time = start_time.unwrap();
             if comm.is_server() {
                 if self.timer <= 0.0 {
                     if let Some(ref sender) = comm.sender {
                         sender
                             .unbounded_send(Packet::BallPosVel {
+                                generation: 0,
+                                timestamp: start_time.elapsed().as_micros(),
                                 position: [transform.translation().x, transform.translation().y],
                                 velocity: ball.velocity,
                             })
@@ -74,8 +82,14 @@ impl<'a> System<'a> for SyncBallSystem {
             }
             if comm.is_client() {
                 for event in event_channel.read(&mut self.reader) {
-                    if let Packet::BallPosVel { position, velocity } = event {
-                        transform.set_translation_xyz(SCENE_WIDTH - position[0], position[1], 0.0);
+                    if let Packet::BallPosVel { timestamp, position, velocity, .. } = event {
+                        let delta_s = (start_time.elapsed().as_micros() - timestamp) as f32 / 1_000_000.0;
+                        // TODO: collision test here
+                        transform.set_translation_xyz(
+                            SCENE_WIDTH - position[0] - velocity[0] * delta_s,
+                            position[1] + velocity[1] * delta_s,
+                            0.0
+                        );
                         ball.velocity[0] = -velocity[0];
                         ball.velocity[1] = velocity[1];
                     }

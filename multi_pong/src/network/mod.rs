@@ -61,6 +61,8 @@ pub enum Packet {
     PaddleDisplace { position: f32, rotation: f32 },
     #[packet(ordered)]
     BallPosVel {
+        generation: u32,
+        timestamp: u128,
         position: [f32; 2],
         velocity: [f32; 2],
     },
@@ -249,7 +251,8 @@ async fn create_client_background_loop(addr: &str) {
                         (duration / 1_000_000) as u64,
                         (duration % 1_000_000) as u32 * 1000
                     );
-                    let now = if state.qin_ding_offset > 0 {
+                    // note that the sign is different
+                    let now = if state.qin_ding_offset < 0 {
                         now.checked_add(duration)
                     } else {
                         now.checked_sub(duration)

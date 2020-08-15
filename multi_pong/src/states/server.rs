@@ -97,7 +97,7 @@ impl SimpleState for ServerWait {
         if let Ok(mut network) = NETWORK.try_lock() {
             if let Some((network, start_time)) = network.take() {
                 data.world.insert(network);
-                data.world.insert(start_time);
+                data.world.insert(Some(start_time));
             }
         }
         let state = data.world.read_resource::<CurrentState>();
