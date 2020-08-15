@@ -90,7 +90,7 @@ impl SimpleState for ClientConnecting {
 
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
         if let Ok(mut network) = NETWORK.try_lock() {
-            if let Some(network) = network.take() {
+            if let Some((network, start_time)) = network.take() {
                 let name = data.world.read_resource::<PlayerNameResource>();
                 if let Some(ref sender) = network.sender {
                     sender
@@ -101,6 +101,7 @@ impl SimpleState for ClientConnecting {
                 }
                 std::mem::drop(name);
                 data.world.insert(network);
+                data.world.insert(start_time);
             }
         }
         let state = data.world.read_resource::<CurrentState>();

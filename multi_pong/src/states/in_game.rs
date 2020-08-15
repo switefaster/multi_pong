@@ -2,7 +2,7 @@ use crate::constants::{
     BALL_ANGULAR_SPEED, BALL_RADIUS, BALL_VELOCITY_X, BALL_VELOCITY_Y, PADDLE_WIDTH, SCENE_HEIGHT,
     SCENE_WIDTH,
 };
-use crate::network::{NetworkCommunication, STATE};
+use crate::network::{NetworkCommunication, PING_LATENCY};
 use crate::states::{CurrentState, PlayerNameResource};
 use crate::systems::{Ball, Paddle, Role};
 use amethyst::{
@@ -13,6 +13,7 @@ use amethyst::{
     renderer::{Camera, ImageFormat, SpriteRender, SpriteSheet, SpriteSheetFormat, Texture},
     ui::{Anchor, TtfFormat, UiText, UiTransform},
 };
+use std::sync::atomic::Ordering::Relaxed;
 
 #[derive(Default)]
 pub struct UpdatableUI {
@@ -59,15 +60,8 @@ impl SimpleState for InGame {
             std::mem::drop(ui);
             let mut storage = data.world.write_storage::<UiText>();
             if let Some(text) = storage.get_mut(ping) {
-                // try_lock() because we don't want the game thread get blocked
-                if let Ok(state) = STATE.try_lock() {
-                    let index = if state.index < state.latency.len() {
-                        state.index
-                    } else {
-                        state.latency.len() - 1
-                    };
-                    text.text = format!("{} ms", (state.latency[index] as f32 * 0.001) as i128);
-                }
+                let latency = PING_LATENCY.load(Relaxed);
+                text.text = format!("{} ms", (latency as f32 * 0.001).round());
             }
         }
         Trans::None

@@ -95,8 +95,9 @@ impl SimpleState for ServerWait {
 
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
         if let Ok(mut network) = NETWORK.try_lock() {
-            if let Some(network) = network.take() {
+            if let Some((network, start_time)) = network.take() {
                 data.world.insert(network);
+                data.world.insert(start_time);
             }
         }
         let state = data.world.read_resource::<CurrentState>();

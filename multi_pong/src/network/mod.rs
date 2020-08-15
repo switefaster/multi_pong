@@ -6,7 +6,10 @@ use futures::{
 use rudp::hand_shake::{client_connect, server_listen};
 use rudp::{start_udp_loop, BypassResult};
 use rudp_derive::PacketDesc;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicI64, Ordering::Relaxed},
+    Arc, Mutex,
+};
 use std::thread;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -73,7 +76,7 @@ pub enum Packet {
     },
 }
 
-pub struct State {
+struct State {
     pub start_time: Instant,
     // timer offset from remote to local, in microsecond
     pub time_offset: [i128; 16],
@@ -83,21 +86,22 @@ pub struct State {
     pub latency: [i128; 16],
     // current index
     pub index: usize,
-    // actual offset from client in microsecond
-    pub actual_offset: i128,
+    // dead count
+    pub dead: u32,
 }
 
 const MAGIC: &[u8] = b"MULTI_PONG";
+pub static PING_LATENCY: AtomicI64 = AtomicI64::new(0);
 lazy_static::lazy_static! {
-    pub static ref STATE: Mutex<State> = Mutex::new(State {
+    static ref STATE: Mutex<State> = Mutex::new(State {
         start_time: Instant::now(),
         time_offset: [0; 16],
         latency: [0; 16],
         qin_ding_offset: 0,
         index: 0,
-        actual_offset: 0
+        dead: 0,
     });
-    pub static ref NETWORK: Mutex<Option<NetworkCommunication>> = Mutex::new(None);
+    pub static ref NETWORK: Mutex<Option<(NetworkCommunication, Instant)>> = Mutex::new(None);
     static ref BG_TERMINATE: Notify = Notify::new();
 }
 
@@ -111,7 +115,7 @@ fn bypass(p: Packet) -> BypassResult<Packet> {
             let state = lock.as_mut().unwrap();
             let remote_time = state.start_time.elapsed().as_micros() as i128;
             let actual_offset = expected_arrival - remote_time;
-            state.actual_offset = actual_offset;
+            log::debug!("Remote time offset: {:>6}μs", actual_offset);
             BypassResult::ToSender(Packet::Pong {
                 client_time,
                 remote_time,
@@ -123,14 +127,14 @@ fn bypass(p: Packet) -> BypassResult<Packet> {
         } => {
             let mut lock = STATE.lock();
             let state = lock.as_mut().unwrap();
+            state.dead = 0;
             let now = state.start_time.elapsed().as_micros() as i128;
             let raw_latency = (now - client_time) / 2;
-            let raw_offset = (remote_time - client_time) - raw_latency;
 
             let index = state.index;
             if index < state.latency.len() {
                 state.latency[index] = raw_latency;
-                state.time_offset[index] = raw_offset;
+                state.time_offset[index] = (remote_time - client_time) - raw_latency;
                 state.index += 1;
                 if index == state.latency.len() - 1 {
                     let &offset = state
@@ -143,13 +147,31 @@ fn bypass(p: Packet) -> BypassResult<Packet> {
                     state.qin_ding_offset = offset;
                 }
             } else {
-                let index = state.latency.len() - 1;
-                state.latency[index] = raw_latency;
-                state.time_offset[index] = raw_offset;
+                PING_LATENCY.store(raw_latency as i64, Relaxed);
             }
             BypassResult::Discard
         }
         _ => BypassResult::ToUser(p),
+    }
+}
+
+fn ping_packet() -> Packet {
+    let (start, offset) = {
+        let mut lock = STATE.lock();
+        let state = lock.as_mut().unwrap();
+        state.dead += 1;
+        // TODO: if dead exceeded certain threshold, we should tell the game to stop.
+        if state.dead > 50 {
+            log::warn!("5s without response!");
+        }
+        (state.start_time, state.qin_ding_offset)
+    };
+    let latency = PING_LATENCY.load(Relaxed) as i128;
+    let client_time = start.elapsed().as_micros() as i128;
+    let expected_arrival = client_time + offset + latency;
+    Packet::Ping {
+        client_time,
+        expected_arrival,
     }
 }
 
@@ -163,39 +185,28 @@ async fn create_server_background_loop(port: u16) {
     BG_TERMINATE.notify();
     BG_TERMINATE.notified().await;
     let f = async move {
-        println!("Server linstening on 0.0.0.0:{}", port);
+        log::info!("Server linstening on 0.0.0.0:{}", port);
         let socket = server_listen(format!("0.0.0.0:{}", port).as_str(), MAGIC).await;
-        println!("Connected!");
+        log::info!("Connected!");
         let timeout = Duration::new(0, 20_000_000);
         let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
         let ping_send = send.clone();
-        *NETWORK.lock().unwrap() = Some(NetworkCommunication::new(recv, send, Side::Server));
         let interval = Duration::new(0, 100_000_000);
+        let mut network = Some(NetworkCommunication::new(recv, send, Side::Server));
         loop {
             delay_for(interval).await;
-            let (start, offset, latency, _) = {
+            if ping_send.unbounded_send(ping_packet()).is_err() {
+                return;
+            }
+            if network.is_some() {
                 let lock = STATE.lock();
                 let state = lock.as_ref().unwrap();
-                let index = if state.index < state.latency.len() {
-                    state.index
-                } else {
-                    state.latency.len() - 1
-                };
-                (
-                    state.start_time,
-                    state.qin_ding_offset,
-                    state.latency[index],
-                    state.actual_offset,
-                )
-            };
-            let client_time = start.elapsed().as_micros() as i128;
-            let expected_arrival = client_time + offset + latency;
-            let packet = Packet::Ping {
-                client_time,
-                expected_arrival,
-            };
-            if ping_send.unbounded_send(packet).is_err() {
-                return;
+                if state.index == state.time_offset.len() {
+                    *NETWORK.lock().unwrap() = Some((
+                        network.take().unwrap(),
+                        state.start_time.clone(),
+                    ));
+                }
             }
         }
     }
@@ -214,39 +225,40 @@ async fn create_client_background_loop(addr: &str) {
     BG_TERMINATE.notify();
     BG_TERMINATE.notified().await;
     let f = async move {
-        println!("Client connecting...");
+        log::info!("Client connecting...");
         let socket = client_connect("0.0.0.0:0", addr, MAGIC).await;
-        println!("Client connected!");
+        log::info!("Client connected!");
         let timeout = Duration::new(0, 20_000_000);
         let (send, recv) = start_udp_loop::<Packet, _>(socket, timeout, 10, 10, bypass, 0);
         let ping_send = send.clone();
-        *NETWORK.lock().unwrap() = Some(NetworkCommunication::new(recv, send, Side::Client));
         let interval = Duration::new(0, 100_000_000);
+        let mut network = Some(NetworkCommunication::new(recv, send, Side::Client));
         loop {
             delay_for(interval).await;
-            let (start, offset, latency, _) = {
+            if ping_send.unbounded_send(ping_packet()).is_err() {
+                return;
+            }
+            if network.is_some() {
                 let lock = STATE.lock();
                 let state = lock.as_ref().unwrap();
-                let index = if state.index < state.latency.len() {
-                    state.index
-                } else {
-                    state.latency.len() - 1
-                };
-                (
-                    state.start_time,
-                    state.qin_ding_offset,
-                    state.latency[index],
-                    state.actual_offset,
-                )
-            };
-            let client_time = start.elapsed().as_micros() as i128;
-            let expected_arrival = client_time + offset + latency;
-            let packet = Packet::Ping {
-                client_time,
-                expected_arrival,
-            };
-            if ping_send.unbounded_send(packet).is_err() {
-                return;
+                if state.index == state.time_offset.len() {
+                    // server clock is our reference
+                    let now = state.start_time.clone();
+                    let duration = state.qin_ding_offset.abs();
+                    let duration = Duration::new(
+                        (duration / 1_000_000) as u64,
+                        (duration % 1_000_000) as u32 * 1000
+                    );
+                    let now = if state.qin_ding_offset > 0 {
+                        now.checked_add(duration)
+                    } else {
+                        now.checked_sub(duration)
+                    }.unwrap();
+                    *NETWORK.lock().unwrap() = Some((
+                        network.take().unwrap(),
+                        now,
+                    ));
+                }
             }
         }
     }
@@ -261,16 +273,16 @@ async fn create_client_background_loop(addr: &str) {
 
 pub fn init_server(port: u16) {
     thread::spawn(move || {
-        println!("Start server...");
+        log::debug!("Start server...");
         create_server_background_loop(port);
-        println!("End server");
+        log::debug!("End server");
     });
 }
 
 pub fn init_client(addr: String) {
     thread::spawn(move || {
-        println!("Start client...");
+        log::debug!("Start client...");
         create_client_background_loop(&addr);
-        println!("End client");
+        log::debug!("End client");
     });
 }

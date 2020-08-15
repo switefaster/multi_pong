@@ -16,6 +16,7 @@ lazy_static = "1.4.0"
 derivative = "2.1.1"
 glsl-layout = "0.3.2"
 failure = "0.1.8"
+log = "0.4.11"
 
 [dev-dependencies]
 float-cmp = "0.8.0"

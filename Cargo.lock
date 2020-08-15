@@ -2130,6 +2130,7 @@ dependencies = [
  "futures",
  "glsl-layout",
  "lazy_static",
+ "log",
  "rudp",
  "rudp_derive",
  "serde",
