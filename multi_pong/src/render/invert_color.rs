@@ -8,34 +8,30 @@ use amethyst::renderer::rendy::command::{QueueId, RenderPassEncoder};
 use amethyst::renderer::rendy::graph::render::{PrepareResult, RenderGroup};
 use amethyst::renderer::rendy::graph::{GraphContext, NodeBuffer, NodeImage};
 use amethyst::renderer::rendy::hal::pass::Subpass;
-use amethyst::renderer::rendy::hal::pso::InputAssemblerDesc;
+use amethyst::renderer::rendy::hal::pso::{InputAssemblerDesc, ShaderStageFlags};
 use amethyst::renderer::rendy::hal::*;
 use amethyst::renderer::rendy::mesh::{AsVertex, VertexFormat};
-use amethyst::renderer::rendy::shader::{
-    PathBufShaderInfo, Shader, ShaderKind, SourceLanguage, SpirvShader,
-};
 use amethyst::renderer::rendy::*;
 use amethyst::renderer::submodules::DynamicVertexBuffer;
 use amethyst::renderer::{util, ChangeDetection, RenderPlugin};
 use amethyst::renderer::{Backend, Factory, Format, RenderGroupDesc};
 use derivative::Derivative;
 use glsl_layout::*;
-use std::path::PathBuf;
+
+use amethyst::renderer::rendy::shader::{Shader, SpirvShader};
 
 lazy_static::lazy_static! {
-    static ref VERTEX: SpirvShader = PathBufShaderInfo::new(
-        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shader/inv_color.vert")),
-        ShaderKind::Vertex,
-        SourceLanguage::GLSL,
+    static ref VERTEX: SpirvShader = SpirvShader::from_bytes(
+        include_bytes!("../../assets/shader/inv_color.vert.spv"),
+        ShaderStageFlags::VERTEX,
         "main",
-    ).precompile().unwrap();
+    ).unwrap();
 
-    static ref FRAGMENT: SpirvShader = PathBufShaderInfo::new(
-        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/shader/inv_color.frag")),
-        ShaderKind::Fragment,
-        SourceLanguage::GLSL,
+    static ref FRAGMENT: SpirvShader = SpirvShader::from_bytes(
+        include_bytes!("../../assets/shader/inv_color.frag.spv"),
+        ShaderStageFlags::FRAGMENT,
         "main",
-    ).precompile().unwrap();
+    ).unwrap();
 }
 
 #[derive(Clone, Debug, PartialEq, Derivative)]

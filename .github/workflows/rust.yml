@@ -39,7 +39,7 @@ jobs:
         toolchain: nightly
         override: true
     - name: Build
-      run: cargo build --release --verbose -Z unstable-options --out-dir artifacts
+      run: cargo build --manifest-path multi_pong/Cargo.toml --release --verbose -Z unstable-options --out-dir artifacts --no-default-features --features "vulkan no-slow-safety-checks"
     - name: Copy Assets and Config(Ubuntu)
       if: matrix.os == 'ubuntu-latest'
       run: cp -R ${{ github.workspace }}/multi_pong/assets ${{ github.workspace }}/artifacts ; cp -R ${{ github.workspace }}/multi_pong/config ${{ github.workspace }}/artifacts
