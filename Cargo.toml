@@ -10,3 +10,4 @@ opt-level = 1
 
 [profile.release]
 lto = "fat"
+incremental = true
