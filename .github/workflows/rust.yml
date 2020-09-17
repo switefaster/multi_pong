@@ -45,7 +45,7 @@ jobs:
       run: cp -R ${{ github.workspace }}/multi_pong/assets ${{ github.workspace }}/artifacts ; cp -R ${{ github.workspace }}/multi_pong/config ${{ github.workspace }}/artifacts
     - name: Copy Assets and Config(Windows)
       if: matrix.os == 'windows-latest'
-      run: mkdir ${{ github.workspace }}/artifacts/assets & xcopy /E /I ${{ github.workspace }}/multi_pong/assets ${{ github.workspace }}/artifacts/assets & mkdir ${{ github.workspace }}/artifacts/config & xcopy /E /I ${{ github.workspace }}/multi_pong/config ${{ github.workspace }}/artifacts/config
+      run: xcopy /E /I ${{ github.workspace }}\multi_pong\assets ${{ github.workspace }}\artifacts\assets; xcopy /E /I ${{ github.workspace }}\multi_pong\config ${{ github.workspace }}\artifacts\config
     - name: Run tests
       run: cargo test --verbose
     - name: Upload artifacts
