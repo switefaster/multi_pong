@@ -1,14 +1,18 @@
 [package]
 name = "rudp"
 version = "0.1.0"
-authors = ["switefaster <switefaster@gmail.com>", "pca006132 <john.lck40@gmail.com>"]
+authors = [
+    "switefaster <switefaster@gmail.com>",
+    "pca006132 <john.lck40@gmail.com>",
+]
 edition = "2018"
+publish = ["internal"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 futures = "0.3"
-tokio = { version = "0.2", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 rand = "0.7.3"
 log = "0.4.11"
 
