@@ -1,6 +1,6 @@
 [package]
 name = "rudp"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
     "switefaster <switefaster@gmail.com>",
     "pca006132 <john.lck40@gmail.com>",
