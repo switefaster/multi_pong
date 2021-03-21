@@ -1,8 +1,4 @@
-use tokio::{
-    net::UdpSocket,
-    time::Duration,
-    time::delay_for,
-};
+use tokio::{net::UdpSocket, time::sleep, time::Duration};
 
 use futures::{future::FutureExt, select};
 
@@ -12,7 +8,7 @@ pub async fn server_listen(bind: &str, magic: &[u8]) -> UdpSocket {
     for _ in 0..CAPACITY {
         buffer.push(0);
     }
-    let mut socket = UdpSocket::bind(bind).await.unwrap();
+    let socket = UdpSocket::bind(bind).await.unwrap();
     loop {
         let (len, from) = socket.recv_from(buffer.as_mut_slice()).await.unwrap();
         if len == magic.len() && &buffer[..magic.len()] == magic {
@@ -37,19 +33,17 @@ pub async fn client_connect(bind: &str, server: &str, magic: &[u8]) -> UdpSocket
     }
     let socket = UdpSocket::bind(bind).await.unwrap();
     socket.connect(server).await.unwrap();
-    let (mut recv, mut send) = socket.split();
     loop {
-        send.send(magic).await.unwrap();
+        socket.send(magic).await.unwrap();
         select! {
-            _ = recv.recv(buffer.as_mut_slice()).fuse() => {
+            _ = socket.recv(buffer.as_mut_slice()).fuse() => {
                 if buffer == magic {
                     break;
                 }
             },
-            _ = delay_for(timeout).fuse() => {
+            _ = sleep(timeout).fuse() => {
             }
         }
     }
-    send.reunite(recv).unwrap()
+    socket
 }
-

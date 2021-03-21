@@ -1,14 +1,14 @@
-use rudp::{hand_shake::*, start_udp_loop, BypassResult, };
+use lazy_static::lazy_static;
+use rudp::{hand_shake::*, start_udp_loop, BypassResult};
 use rudp_derive::PacketDesc;
 use std::env;
 use std::sync::Mutex;
-use lazy_static::lazy_static;
 use tokio::{
     join,
-    stream::StreamExt,
     time::Duration,
-    time::{delay_for, Instant},
+    time::{sleep, Instant},
 };
+use tokio_stream::StreamExt;
 
 const MAGIC: &[u8] = "MULTIPONG".as_bytes();
 
@@ -23,7 +23,7 @@ enum Packet {
     Pong {
         client_time: i128,
         remote_time: i128,
-    }
+    },
 }
 
 struct State {
@@ -53,19 +53,28 @@ lazy_static! {
 
 fn bypass(p: Packet) -> BypassResult<Packet> {
     match p {
-        Packet::Ping {client_time, expected_arrival} => {
+        Packet::Ping {
+            client_time,
+            expected_arrival,
+        } => {
             let mut lock = STATE.lock();
             let state = lock.as_mut().unwrap();
             let remote_time = state.start_time.elapsed().as_micros() as i128;
             let actual_offset = expected_arrival - remote_time;
             state.actual_offset = actual_offset;
-            BypassResult::ToSender(Packet::Pong { client_time, remote_time })
-        },
-        Packet::Pong { client_time, remote_time } => {
+            BypassResult::ToSender(Packet::Pong {
+                client_time,
+                remote_time,
+            })
+        }
+        Packet::Pong {
+            client_time,
+            remote_time,
+        } => {
             let mut lock = STATE.lock();
             let state = lock.as_mut().unwrap();
             let now = state.start_time.elapsed().as_micros() as i128;
-            let raw_latency = (now - client_time ) / 2;
+            let raw_latency = (now - client_time) / 2;
             let raw_offset = (remote_time - client_time) - raw_latency;
 
             let index = state.index;
@@ -74,8 +83,13 @@ fn bypass(p: Packet) -> BypassResult<Packet> {
                 state.time_offset[index] = raw_offset;
                 state.index += 1;
                 if index == state.latency.len() - 1 {
-                    let &offset = state.latency.iter().zip(state.time_offset.iter())
-                        .min_by_key(|v| v.0).unwrap().1;
+                    let &offset = state
+                        .latency
+                        .iter()
+                        .zip(state.time_offset.iter())
+                        .min_by_key(|v| v.0)
+                        .unwrap()
+                        .1;
                     state.qin_ding_offset = offset;
                 }
             } else {
@@ -84,7 +98,7 @@ fn bypass(p: Packet) -> BypassResult<Packet> {
                 state.time_offset[index] = raw_offset;
             }
             BypassResult::Discard
-        },
+        }
     }
 }
 
@@ -119,7 +133,7 @@ async fn main() {
             match p {
                 None => {
                     return;
-                },
+                }
                 _ => panic!("should not happen"),
             }
         }
@@ -127,7 +141,7 @@ async fn main() {
     let send_task = tokio::spawn(async move {
         let interval = Duration::new(0, 100_000_000);
         loop {
-            delay_for(interval).await;
+            sleep(interval).await;
             let (start, offset, latency, actual) = {
                 let lock = STATE.lock();
                 let state = lock.as_ref().unwrap();
@@ -136,15 +150,20 @@ async fn main() {
                 } else {
                     state.latency.len() - 1
                 };
-                (state.start_time,
-                 state.qin_ding_offset,
-                 state.latency[index],
-                 state.actual_offset)
+                (
+                    state.start_time,
+                    state.qin_ding_offset,
+                    state.latency[index],
+                    state.actual_offset,
+                )
             };
             println!("Actual: {:>6}, Latency: {:>6}", actual, latency);
             let client_time = start.elapsed().as_micros() as i128;
             let expected_arrival = client_time + offset + latency;
-            let packet = Packet::Ping {client_time, expected_arrival};
+            let packet = Packet::Ping {
+                client_time,
+                expected_arrival,
+            };
             if send.unbounded_send(packet).is_err() {
                 return;
             }

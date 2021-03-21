@@ -1,4 +1,4 @@
-#![recursion_limit="256"]
+#![recursion_limit = "256"]
 pub mod hand_shake;
 mod protocol;
 mod receiver;
@@ -28,9 +28,9 @@ async fn udp_loop<
     bypass: F,
 ) {
     let (ack_from, mut ack_to) = unbounded();
-    let (recv, send) = socket.split();
-    let mut sender = Sender::<T>::new(send, timeout, slot_capacity, max_retry);
-    let mut receiver = Receiver::new(recv, &sender);
+    let socket = Arc::new(socket);
+    let mut sender = Sender::<T>::new(socket.clone(), timeout, slot_capacity, max_retry);
+    let mut receiver = Receiver::new(socket, &sender);
     let send_task = tokio::spawn(async move {
         let mut from_fg = from_fg;
         sender.send_loop(&mut from_fg, &mut ack_to).await;

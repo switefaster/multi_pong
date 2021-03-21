@@ -4,10 +4,10 @@ use std::env;
 use std::mem::size_of;
 use tokio::{
     join,
-    stream::StreamExt,
     time::Duration,
-    time::{delay_for, Instant},
+    time::{sleep, Instant},
 };
+use tokio_stream::StreamExt;
 
 const MAGIC: &[u8] = "MULTIPONG".as_bytes();
 
@@ -113,8 +113,7 @@ async fn main() {
                 }
                 Some(Packet::Pong(reliable, id, timestamp)) => {
                     let time = start.elapsed().as_micros() - timestamp;
-                    mean = mean * count as f64 - window[index] as f64
-                        + time as f64;
+                    mean = mean * count as f64 - window[index] as f64 + time as f64;
                     window[index] = time;
                     index = (index + 1) % WINDOW_SIZE;
                     if count < WINDOW_SIZE {
@@ -141,7 +140,7 @@ async fn main() {
         let mut id = 0;
         let interval = Duration::new(0, 5_000_000);
         loop {
-            delay_for(interval).await;
+            sleep(interval).await;
             let reliable = id % 5 == 0;
             let packet = Packet::Ping(reliable, id, start.elapsed().as_micros());
             id += 1;

@@ -1,4 +1,4 @@
-use super::protocol::{PacketDesc, PacketHeader, modify_header};
+use super::protocol::{modify_header, PacketDesc, PacketHeader};
 use futures::{
     channel::mpsc::UnboundedReceiver,
     future::{Fuse, FusedFuture, FutureExt},
@@ -13,9 +13,9 @@ use std::{
     },
 };
 use tokio::{
-    net::udp::SendHalf,
+    net::UdpSocket,
     sync::Notify,
-    time::{delay_until, Delay, Duration, Instant},
+    time::{sleep_until, Duration, Instant, Sleep},
 };
 
 pub struct Sender<T: PacketDesc> {
@@ -23,7 +23,7 @@ pub struct Sender<T: PacketDesc> {
     retry_max: u32,
     generation: i64,
     timeout: Duration,
-    inner: SendHalf,
+    inner: Arc<UdpSocket>,
     slots_generation: Arc<Vec<AtomicI64>>,
     slots_used: Arc<Vec<AtomicBool>>,
     notify: Arc<Notify>,
@@ -34,7 +34,7 @@ pub struct Sender<T: PacketDesc> {
 struct Slot(Vec<u8>, Instant);
 
 impl<T: PacketDesc> Sender<T> {
-    pub fn new(inner: SendHalf, timeout: Duration, capacity: usize, retry_max: u32) -> Self {
+    pub fn new(inner: Arc<UdpSocket>, timeout: Duration, capacity: usize, retry_max: u32) -> Self {
         let mut slots_generation = Vec::with_capacity(capacity);
         let mut slots_used = Vec::with_capacity(capacity);
         for _ in 0..capacity {
@@ -54,7 +54,7 @@ impl<T: PacketDesc> Sender<T> {
             slots_used,
             notify,
             queue: VecDeque::new(),
-            used_queue: VecDeque::with_capacity(capacity)
+            used_queue: VecDeque::with_capacity(capacity),
         }
     }
 
@@ -107,12 +107,7 @@ impl<T: PacketDesc> Sender<T> {
         }
     }
 
-    fn put_in<'a>(
-        &mut self,
-        slots: &'a mut [Slot],
-        data: T,
-        empty: usize,
-    ) -> &'a Vec<u8> {
+    fn put_in<'a>(&mut self, slots: &'a mut [Slot], data: T, empty: usize) -> &'a Vec<u8> {
         let generation = self.generation;
         self.generation += 1;
         self.slots_used[empty].store(true, Ordering::Relaxed);
@@ -158,7 +153,11 @@ impl<T: PacketDesc> Sender<T> {
         payload
     }
 
-    pub async fn send_loop(&mut self, channel: &mut UnboundedReceiver<T>, ack_channel: &mut UnboundedReceiver<(u32, isize, i64)>,) {
+    pub async fn send_loop(
+        &mut self,
+        channel: &mut UnboundedReceiver<T>,
+        ack_channel: &mut UnboundedReceiver<(u32, isize, i64)>,
+    ) {
         let mut slots = Vec::with_capacity(self.slots_used.len());
         let now = Instant::now();
         for _ in 0..self.slots_used.len() {
@@ -168,7 +167,7 @@ impl<T: PacketDesc> Sender<T> {
         PacketHeader::new(0, 0, 0).serialize(&mut ack_payload);
         let mut unreliable_payload = Vec::with_capacity(100);
 
-        let timeout = Fuse::<Delay>::terminated();
+        let timeout = Fuse::<Sleep>::terminated();
         let notify = self.get_notify();
         let got_ack = notify.notified().fuse();
         let receive = channel.into_future().fuse();
@@ -178,7 +177,7 @@ impl<T: PacketDesc> Sender<T> {
             if timeout.is_terminated() {
                 if let Some(slot) = self.get_oldest(&mut slots) {
                     let deadline = slot.1 + self.timeout;
-                    timeout.set(delay_until(deadline).fuse());
+                    timeout.set(sleep_until(deadline).fuse());
                 }
             }
             select_biased! {

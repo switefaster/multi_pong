@@ -12,10 +12,10 @@ use std::{
         Arc,
     },
 };
-use tokio::{net::udp::RecvHalf, sync::Notify};
+use tokio::{net::UdpSocket, sync::Notify};
 
 pub struct Receiver {
-    inner: RecvHalf,
+    inner: Arc<UdpSocket>,
     slots_generation: Arc<Vec<AtomicI64>>,
     recv_generation: Vec<Option<i64>>,
     slots_used: Arc<Vec<AtomicBool>>,
@@ -42,7 +42,7 @@ fn is_new(old: Option<&i64>, current: i64) -> bool {
 }
 
 impl Receiver {
-    pub fn new<T: PacketDesc>(inner: RecvHalf, sender: &Sender<T>) -> Self {
+    pub fn new<T: PacketDesc>(inner: Arc<UdpSocket>, sender: &Sender<T>) -> Self {
         let slots_generation = sender.get_slots_generation();
         let slots_used = sender.get_slots_used();
         let notify = sender.get_notify();
@@ -123,9 +123,14 @@ impl Receiver {
             return;
         }
         if self.slots_generation[slot as usize - 1].load(Ordering::Acquire) == p.generation {
-            if self.slots_used[slot as usize - 1].compare_and_swap(true, false, Ordering::Release) {
+            if let Ok(_) = self.slots_used[slot as usize - 1].compare_exchange(
+                true,
+                false,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
                 // only notify when it is originally used
-                self.notify.notify();
+                self.notify.notify_one();
             }
         }
     }
